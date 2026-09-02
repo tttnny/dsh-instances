@@ -6,18 +6,23 @@
 //! 其中 PredefinedMenuItem 提供原生行为与加速键，
 //! 自定义 MenuItem 用于导航与功能项并转发事件到前端。
 //!
-//! ## 前端契约 (给 t4 前端联动用)
+//! ## 前端契约 (M3 收敛后的唯一规范)
 //!
-//! 后端通过 `app.emit(event, ())` 向主窗口转发下列事件
-//! (前端用 `@tauri-apps/api/event` 的 `listen` 订阅即可):
+//! 导航统一走 `menu-navigate` 事件（载荷为路由字符串，前端用
+//! `@tauri-apps/api/event` 的 `listen` 订阅后交 `resolveMenuRoute` 解析）：
+//!
+//! | `menu-navigate` 载荷 | 菜单来源 |
+//! | --- | --- |
+//! | `/` | “显示”→启动器首页 (Cmd+1) |
+//! | `/instances` | “显示”→实例列表 (Cmd+2) |
+//! | `/tasks` | “显示”→任务列表 (Cmd+3) |
+//! | `/download` | “显示”→下载/版本 (Cmd+4) |
+//! | `/settings` | App 菜单→偏好设置 (Cmd+,) |
+//!
+//! 非导航动作仍用各自事件（载荷为 `()`）：
 //!
 //! | 事件 | 菜单来源 | 建议前端动作 |
 //! | --- | --- | --- |
-//! | `show-launcher` | “显示”→启动器首页 (Cmd+1) | 路由到 `/` |
-//! | `open-instances` | “显示”→实例列表 (Cmd+2) | 路由到 `/instances` |
-//! | `open-tasks` | “显示”→任务列表 (Cmd+3) | 路由到 `/tasks` |
-//! | `open-downloads` | “显示”→下载/版本 (Cmd+4) | 路由到 `/download` |
-//! | `open-settings` | App 菜单→偏好设置 (Cmd+,) | 路由到 `/settings` |
 //! | `check-update` | “帮助”→检查更新 | 调用 `check_launcher_update` |
 //! | `open-help` | “帮助”→使用文档 | 打开文档页面 |
 //!
@@ -49,24 +54,14 @@ const ID_SHOW_MAIN: &str = "appmenu-show-main";
 const ID_CHECK_UPDATE: &str = "appmenu-check-update";
 const ID_OPEN_HELP: &str = "appmenu-open-help";
 
-// ── 转发到前端的事件名 ────────────────────────────────────
-/// 启动器首页——前端建议路由到 `/`。
-pub const EVT_SHOW_LAUNCHER: &str = "show-launcher";
-/// 实例列表——前端建议路由到 `/instances`。
-pub const EVT_OPEN_INSTANCES: &str = "open-instances";
-/// 任务列表——前端建议路由到 `/tasks`。
-pub const EVT_OPEN_TASKS: &str = "open-tasks";
-/// 下载/版本——前端建议路由到 `/download`。
-pub const EVT_OPEN_DOWNLOADS: &str = "open-downloads";
-/// 设置——前端建议路由到 `/settings`。
-pub const EVT_OPEN_SETTINGS: &str = "open-settings";
+// ── 转发到前端的事件名（M3 收敛：导航只用 `menu-navigate`） ──
+/// 规范导航事件（`shortcuts.ts` 的 `MENU_NAVIGATE_EVENTS` 之首），
+/// 载荷为路由字符串（`/`、`/instances`、`/tasks`、`/download`、`/settings`）。
+pub const EVT_MENU_NAVIGATE: &str = "menu-navigate";
 /// 检查更新——前端建议调用 `check_launcher_update`。
 pub const EVT_CHECK_UPDATE: &str = "check-update";
 /// 使用文档——前端建议打开文档页面。
 pub const EVT_OPEN_HELP: &str = "open-help";
-/// t6 合并兼容：t4 前端监听的规范导航事件（`shortcuts.ts` 的
-/// `MENU_NAVIGATE_EVENTS` 之首），载荷为路由字符串。
-pub const EVT_MENU_NAVIGATE: &str = "menu-navigate";
 
 /// 构建 macOS 原生应用菜单。在 Windows/Linux 上同样显示
 /// 一致的菜单栏 (不受支持的 predefined 项在那些平台上为 no-op)，
@@ -214,23 +209,20 @@ pub fn build_app_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
 /// 导航/功能类 emit 事件给前端。不认识的 id 忽略
 /// (predefined 项如 About/隐藏/剪切等由系统原生处理)。
 pub fn handle_menu_event(app: &AppHandle, event: tauri::menu::MenuEvent) {
-    // 先确保主窗口可见再通知前端路由跳转。t6 合并兼容：除 t3 文档约定的
-    // 专有事件外，一并转发 t4 监听的规范 `menu-navigate` 事件（路由字符串
-    // 由前端 `resolveMenuRoute` 解析），否则原生菜单的导航在合并后无响应。
-    let show_and_emit = |app: &AppHandle, event_name: &str, route: &str| {
+    // 先确保主窗口可见，再用唯一的规范事件 `menu-navigate` 通知前端路由
+    // 跳转（路由字符串由前端 `resolveMenuRoute` 解析）。M3 收敛：不再发送
+    // t3 时期的专有导航事件，托盘侧亦然。
+    let show_and_emit = |app: &AppHandle, route: &str| {
         crate::windows::show_or_create_main(app);
-        if let Err(e) = app.emit(event_name, ()) {
-            crate::log_warn!("菜单事件 `{event_name}` 转发失败: {e}");
-        }
         let _ = app.emit(EVT_MENU_NAVIGATE, route.to_string());
     };
     match event.id().as_ref() {
         ID_SHOW_MAIN => crate::windows::show_or_create_main(app),
-        ID_VIEW_HOME => show_and_emit(app, EVT_SHOW_LAUNCHER, "/"),
-        ID_VIEW_INSTANCES => show_and_emit(app, EVT_OPEN_INSTANCES, "/instances"),
-        ID_VIEW_TASKS => show_and_emit(app, EVT_OPEN_TASKS, "/tasks"),
-        ID_VIEW_DOWNLOADS => show_and_emit(app, EVT_OPEN_DOWNLOADS, "/download"),
-        ID_VIEW_SETTINGS | ID_PREFERENCES => show_and_emit(app, EVT_OPEN_SETTINGS, "/settings"),
+        ID_VIEW_HOME => show_and_emit(app, "/"),
+        ID_VIEW_INSTANCES => show_and_emit(app, "/instances"),
+        ID_VIEW_TASKS => show_and_emit(app, "/tasks"),
+        ID_VIEW_DOWNLOADS => show_and_emit(app, "/download"),
+        ID_VIEW_SETTINGS | ID_PREFERENCES => show_and_emit(app, "/settings"),
         ID_CHECK_UPDATE => {
             if let Err(e) = app.emit(EVT_CHECK_UPDATE, ()) {
                 crate::log_warn!("菜单事件 `check-update` 转发失败: {e}");

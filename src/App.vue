@@ -56,7 +56,7 @@ onMounted(async () => {
   await setupMenuListeners()
 })
 
-// --- In-app shortcuts (t4): Cmd/Ctrl+1/2/3, Cmd+, K/R, Esc --------------------
+// --- In-app shortcuts (t4/t9): Cmd/Ctrl+1/2/3/4, Cmd+, K/R, Esc --------------
 
 function goShortcut(name: ShortcutRoute) {
   if (route.name === name) return
@@ -96,8 +96,47 @@ async function setupMenuListeners() {
       const un = await listen(name, () => refreshShortcut())
       unlistenMenu.push(un)
     }
+    // H3: Help-menu actions have no route target — handle them here instead
+    // of leaving the clicks dead. Same semantics as the tray counterpart.
+    unlistenMenu.push(await listen('check-update', () => void onMenuCheckUpdate()))
+    unlistenMenu.push(await listen('open-help', () => void onMenuOpenHelp()))
   } catch {
     // Event bridge unavailable (browser preview); shortcuts still work.
+  }
+}
+
+let checkingMenuUpdate = false
+
+/**
+ * Native menu → 检查更新 (H3 fix): same semantics as the tray counterpart
+ * (`check_update_from_tray`) — open the release page when an update exists,
+ * otherwise toast up-to-date. Failures surface as an error toast so the
+ * click never looks dead.
+ */
+async function onMenuCheckUpdate() {
+  if (checkingMenuUpdate) return
+  checkingMenuUpdate = true
+  try {
+    const info = await api.checkLauncherUpdate('dev')
+    if (info.up_to_date) {
+      Message.success(t('settings.update.upToDate'))
+    } else {
+      Message.info(t('settings.update.available', { version: info.latest ?? '' }))
+      if (info.url) await api.openExternal(info.url)
+    }
+  } catch (e) {
+    Message.error(String(e))
+  } finally {
+    checkingMenuUpdate = false
+  }
+}
+
+/** Native menu → 使用文档 (H3 fix): open the project README in the browser. */
+async function onMenuOpenHelp() {
+  try {
+    await api.openExternal('https://github.com/dsh-plugins/dsh-launcher')
+  } catch (e) {
+    Message.error(String(e))
   }
 }
 

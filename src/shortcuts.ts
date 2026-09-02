@@ -20,6 +20,34 @@ export const MENU_NAVIGATE_EVENTS = ['menu-navigate', 'navigate', 'app-navigate'
 
 export const MENU_REFRESH_EVENTS = ['menu-refresh', 'app-refresh'] as const
 
+/**
+ * Single source of truth for the Settings shortcut card (t14).
+ * `labelKey` is a vue-i18n key under `settings.shortcuts`; `keys` are the
+ * display chips. Rows marked `native` are handled by the OS/Rust menu
+ * (app_menu.rs) rather than `handleAppKeydown`, but are listed so the card
+ * documents the full table and cannot drift from it.
+ */
+export interface ShortcutDoc {
+  labelKey: string
+  keys: string[]
+  native?: boolean
+}
+
+const MOD = '\u2318 / Ctrl'
+
+export const SHORTCUT_DOCS: ShortcutDoc[] = [
+  { labelKey: 'settings.shortcuts.goHome', keys: [MOD, '1'] },
+  { labelKey: 'settings.shortcuts.goInstances', keys: [MOD, '2'] },
+  { labelKey: 'settings.shortcuts.goTasks', keys: [MOD, '3'] },
+  { labelKey: 'settings.shortcuts.goDownload', keys: [MOD, '4'] },
+  { labelKey: 'settings.shortcuts.openSettings', keys: [MOD, ','] },
+  { labelKey: 'settings.shortcuts.goTasksAlt', keys: [MOD, 'K'] },
+  { labelKey: 'settings.shortcuts.showMain', keys: [MOD, '0'], native: true },
+  { labelKey: 'settings.shortcuts.quitApp', keys: [MOD, 'Q'], native: true },
+  { labelKey: 'settings.shortcuts.refresh', keys: [MOD, 'R'] },
+  { labelKey: 'settings.shortcuts.back', keys: ['Esc'] },
+]
+
 const NAVIGATE_TARGETS: Record<string, ShortcutRoute> = {
   home: 'home',
   '/': 'home',
@@ -75,9 +103,11 @@ export function isEditableTarget(target: EventTarget | null): boolean {
 /**
  * Global keydown dispatcher for in-app shortcuts.
  *
- * - Cmd/Ctrl+1 → home, Cmd/Ctrl+2 → download, Cmd/Ctrl+3 → settings
- * - Cmd/Ctrl+, → settings (macOS convention)
- * - Cmd/Ctrl+K → tasks
+ * Digit mapping mirrors the native menu (app_menu.rs "显示" submenu):
+ * - Cmd/Ctrl+1 → home, Cmd/Ctrl+2 → instances, Cmd/Ctrl+3 → tasks,
+ *   Cmd/Ctrl+4 → download
+ * - Cmd/Ctrl+, → settings (macOS Preferences convention)
+ * - Cmd/Ctrl+K → tasks (legacy alias)
  * - Cmd/Ctrl+R → in-app status refresh (NOT a page reload)
  * - Esc → blur an input, otherwise navigate back
  *
@@ -112,10 +142,13 @@ export function handleAppKeydown(e: KeyboardEvent, actions: ShortcutActions): bo
       actions.go('home')
       return true
     case '2':
-      actions.go('download')
+      actions.go('instances')
       return true
     case '3':
-      actions.go('settings')
+      actions.go('tasks')
+      return true
+    case '4':
+      actions.go('download')
       return true
     case ',':
       actions.go('settings')

@@ -6,6 +6,7 @@ import { api } from '@/api'
 import type { LauncherUpdateInfo, LogLevel, ThemeMode } from '@/api/types'
 import { SUPPORTED_LOCALES } from '@/i18n'
 import { useLauncherStore } from '@/stores/launcher'
+import { SHORTCUT_DOCS } from '@/shortcuts'
 
 const { t } = useI18n()
 const store = useLauncherStore()
@@ -23,17 +24,11 @@ const LOG_LEVEL_OPTIONS = computed<{ value: LogLevel; label: string }[]>(() => [
   { value: 'error', label: t('settings.logLevel.error') },
 ])
 
-// --- In-app shortcut reference (t4): mirrors src/shortcuts.ts ------------------
+// --- In-app shortcut reference (t4/t14): rendered from SHORTCUT_DOCS ---------
 
-const shortcutRows = computed<{ label: string; keys: string[] }[]>(() => [
-  { label: t('settings.shortcuts.goHome'), keys: ['\u2318 / Ctrl', '1'] },
-  { label: t('settings.shortcuts.goDownload'), keys: ['\u2318 / Ctrl', '2'] },
-  { label: t('settings.shortcuts.goSettings'), keys: ['\u2318 / Ctrl', '3'] },
-  { label: t('settings.shortcuts.openSettings'), keys: ['\u2318 / Ctrl', ','] },
-  { label: t('settings.shortcuts.goTasks'), keys: ['\u2318 / Ctrl', 'K'] },
-  { label: t('settings.shortcuts.refresh'), keys: ['\u2318 / Ctrl', 'R'] },
-  { label: t('settings.shortcuts.back'), keys: ['Esc'] },
-])
+const shortcutRows = computed<{ label: string; keys: string[]; native: boolean }[]>(() =>
+  SHORTCUT_DOCS.map((d) => ({ label: t(d.labelKey), keys: d.keys, native: d.native ?? false })),
+)
 
 // --- General settings -------------------------------------------------------
 
@@ -326,7 +321,7 @@ const homeColumns = computed(() => [
       <p class="news-source-hint">{{ t('settings.shortcuts.desc') }}</p>
       <div class="shortcut-list">
         <div v-for="row in shortcutRows" :key="row.label" class="shortcut-row">
-          <span class="shortcut-label">{{ row.label }}</span>
+          <span class="shortcut-label">{{ row.label }}<a-tag v-if="row.native" size="small" class="shortcut-native">{{ t('settings.shortcuts.nativeTag') }}</a-tag></span>
           <span class="shortcut-keys">
             <kbd v-for="k in row.keys" :key="k" class="shortcut-kbd">{{ k }}</kbd>
           </span>
@@ -598,6 +593,10 @@ const homeColumns = computed(() => [
 .shortcut-label {
   font-size: 13px;
   color: var(--color-text-1);
+}
+
+.shortcut-native {
+  margin-left: 8px;
 }
 
 .shortcut-keys {

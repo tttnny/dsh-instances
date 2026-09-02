@@ -174,13 +174,17 @@
       "action": "操作",
       "keys": "按键",
       "goHome": "前往启动页",
-      "goDownload": "前往下载页",
-      "goSettings": "前往设置页",
-      "openSettings": "打开设置（偏好设置）",
+      "goInstances": "前往实例列表",
       "goTasks": "前往任务页",
+      "goDownload": "前往下载页",
+      "openSettings": "打开设置（偏好设置）",
+      "goTasksAlt": "前往任务页（备用快捷键）",
+      "showMain": "显示主窗口",
+      "quitApp": "退出启动器",
+      "nativeTag": "原生",
       "refresh": "刷新实例与任务状态",
       "back": "返回上一页（输入框内仅退出输入）",
-      "note": "macOS 用 ⌘，Windows / Linux 用 Ctrl；⌘/Ctrl+R 只刷新应用内状态，不会重载页面；输入框内的普通编辑按键不会被劫持。"
+      "note": "macOS 用 ⌘，Windows / Linux 用 Ctrl；⌘/Ctrl+R 只刷新应用内状态，不会重载页面；输入框内的普通编辑按键不会被劫持。标「原生」的行由系统菜单直接处理，在应用内同样生效。"
     },
     "proxy": {
       "title": "代理",

@@ -174,13 +174,17 @@
       "action": "Action",
       "keys": "Keys",
       "goHome": "Go to Launch",
-      "goDownload": "Go to Download",
-      "goSettings": "Go to Settings",
-      "openSettings": "Open Settings (Preferences)",
+      "goInstances": "Go to Instances",
       "goTasks": "Go to Tasks",
+      "goDownload": "Go to Download",
+      "openSettings": "Open Settings (Preferences)",
+      "goTasksAlt": "Go to Tasks (alternate binding)",
+      "showMain": "Show main window",
+      "quitApp": "Quit the launcher",
+      "nativeTag": "Native",
       "refresh": "Refresh instance and task status",
       "back": "Go back (blurs inputs when typing)",
-      "note": "Use \u2318 on macOS and Ctrl on Windows / Linux; \u2318/Ctrl+R only refreshes in-app state and never reloads the page; ordinary editing keys inside inputs are never hijacked."
+      "note": "Use \u2318 on macOS and Ctrl on Windows / Linux; \u2318/Ctrl+R only refreshes in-app state and never reloads the page; ordinary editing keys inside inputs are never hijacked. Rows marked \"Native\" are handled directly by the system menu and work inside the app too."
     },
     "proxy": {
       "title": "Proxy",

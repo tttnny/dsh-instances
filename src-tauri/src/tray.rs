@@ -1,4 +1,5 @@
 use crate::{process, AppState};
+use std::sync::atomic::{AtomicU64, Ordering};
 use tauri::menu::{IsMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager};
@@ -27,6 +28,20 @@ const MENU_RESTART: &str = "restart";
 
 /// (instance_id, instance_name, profile)
 type RunningItem = (String, String, String);
+
+/// M1: 左键单击防抖 —— 双击会先产生两次 Click(Left,Up) 再产生 DoubleClick，
+/// 若单击立即开窗，双击就会多弹出一次主窗口。单击只记录时间戳并延迟
+/// ~250ms，若期间出现新的单击或双击则丢弃本次单击。
+const LEFT_CLICK_DEBOUNCE_MS: u64 = 250;
+static LAST_LEFT_UP_MS: AtomicU64 = AtomicU64::new(0);
+static LAST_DOUBLE_CLICK_MS: AtomicU64 = AtomicU64::new(0);
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
 
 /// Builds the tray icon with its dynamic menu. Called from setup with no
 /// running instances yet.
@@ -73,16 +88,34 @@ pub fn build_tray(app: &AppHandle) -> tauri::Result<()> {
             }
         })
         .on_tray_icon_event(|tray, event| {
-            // t2: 左键单击直接打开主窗口；右键单击交由系统弹出托盘菜单
+            // t2: 左键单击打开主窗口；右键单击交由系统弹出托盘菜单
             // (show_menu_on_left_click(false) 下左键默认无行为，右键自动弹菜单)；
             // 双击保留原有兼容行为（最近实例 / 单实例 / 启动器）。
+            // M1: 单击经防抖延迟执行，双击优先 —— 双击序列会先触发两次
+            // Click(Left,Up)，若单击立即开窗，双击就会多弹一次主窗口。
             match event {
                 TrayIconEvent::Click {
                     button: MouseButton::Left,
                     button_state: MouseButtonState::Up,
                     ..
                 } => {
-                    show_launcher(tray.app_handle());
+                    let stamp = now_ms();
+                    LAST_LEFT_UP_MS.store(stamp, Ordering::SeqCst);
+                    let handle = tray.app_handle().clone();
+                    tauri::async_runtime::spawn(async move {
+                        tokio::time::sleep(std::time::Duration::from_millis(
+                            LEFT_CLICK_DEBOUNCE_MS,
+                        ))
+                        .await;
+                        // 期间有新的单击则让新的一次决定；有双击则双击接管。
+                        if LAST_LEFT_UP_MS.load(Ordering::SeqCst) != stamp {
+                            return;
+                        }
+                        if LAST_DOUBLE_CLICK_MS.load(Ordering::SeqCst) > stamp {
+                            return;
+                        }
+                        show_launcher(&handle);
+                    });
                 }
                 TrayIconEvent::Click {
                     button: MouseButton::Right,
@@ -94,6 +127,7 @@ pub fn build_tray(app: &AppHandle) -> tauri::Result<()> {
                     // reader does not "fix" right click into opening windows.
                 }
                 TrayIconEvent::DoubleClick { .. } => {
+                    LAST_DOUBLE_CLICK_MS.store(now_ms(), Ordering::SeqCst);
                     handle_double_click(tray.app_handle());
                 }
                 _ => {}
@@ -158,17 +192,19 @@ fn build_menu(app: &AppHandle, running: &[RunningItem]) -> tauri::Result<Menu<ta
     };
     let status_header = MenuItem::with_id(app, MENU_STATUS, &status_text, false, None::<&str>)?;
 
+    // M2: 与快捷入口>回到首页区分 —— 本项只显示主窗口（停留在当前页面），
+    // 回到首页还会导航到启动页 "/"。菜单 id 保持不变，前端不受影响。
     let open_launcher = MenuItem::with_id(
         app,
         MENU_OPEN_LAUNCHER,
-        "打开启动器",
+        "显示主窗口",
         true,
         Some("CmdOrCtrl+O"),
     )?;
 
     // Launcher page shortcuts: show the main window and ask the frontend to
     // navigate (event is a no-op until the frontend listens).
-    let quick_home = MenuItem::with_id(app, MENU_QUICK_HOME, "启动页首页", true, None::<&str>)?;
+    let quick_home = MenuItem::with_id(app, MENU_QUICK_HOME, "回到首页", true, None::<&str>)?;
     let quick_instances =
         MenuItem::with_id(app, MENU_QUICK_INSTANCES, "实例列表", true, None::<&str>)?;
     let quick_create = MenuItem::with_id(app, MENU_QUICK_CREATE, "新建实例…", true, None::<&str>)?;
@@ -248,7 +284,8 @@ fn build_menu(app: &AppHandle, running: &[RunningItem]) -> tauri::Result<Menu<ta
     )?;
     let open_settings =
         MenuItem::with_id(app, MENU_OPEN_SETTINGS, "打开设置…", true, None::<&str>)?;
-    let restart = MenuItem::with_id(app, MENU_RESTART, "重启启动器", true, Some("CmdOrCtrl+R"))?;
+    // 无加速键：CmdOrCtrl+R 与前端 Webview 的 Cmd+R 刷新冲突，误触会重启整个启动器，故不设加速键。
+    let restart = MenuItem::with_id(app, MENU_RESTART, "重启启动器", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, MENU_QUIT, "退出启动器", true, Some("CmdOrCtrl+Q"))?;
 
     let sep_top = PredefinedMenuItem::separator(app)?;
@@ -293,12 +330,10 @@ fn show_launcher(app: &AppHandle) {
 /// name and resolves the route payload via `resolveMenuRoute`).
 const EVT_MENU_NAVIGATE: &str = "menu-navigate";
 
-/// Shows the main window and asks the frontend to navigate to `route`.
-/// Emits both the tray-specific event and the canonical `menu-navigate`
-/// event so the t4 listener drives the route; unheard events are no-ops.
+/// Shows the main window and asks the frontend to navigate to `route` via
+/// the single canonical `menu-navigate` event (M3 收敛：导航只走该规范事件）。
 fn show_and_navigate(app: &AppHandle, route: &str) {
     show_launcher(app);
-    let _ = app.emit("tray-navigate", route.to_string());
     let _ = app.emit(EVT_MENU_NAVIGATE, route.to_string());
 }
 
