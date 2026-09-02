@@ -1,88 +1,45 @@
 <div align="center">
 
-<img src="docs/banner.png" width="1024" height="512" alt="DSH Launcher banner">
+<img src="docs/banner.png" width="1024" height="512" alt="DSH Launcher">
 
 # DSH Launcher
 
-**A desktop launcher for running multiple [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness) versions and instances side by side.**
-
-English | [简体中文](README.zh_CN.md)
+**多版本、多实例的 [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness) macOS 桌面启动器**（Tauri 2 + Vue 3，Apple Silicon）。
 
 </div>
 
-Tauri 2 + Vue 3 + TypeScript + Sass + vue-router + vue-i18n + Arco Design Vue.
+## 功能
 
-## Preview
+- **多版本 / 多实例**：从 npm 安装多个 DSH 版本到隔离目录；同一版本可建多个实例，各自拥有独立名称、Profile 与环境变量（`DSH_HOME` 支持共用、自动收录 `~/.dsh` 或专属目录）。
+- **一键启动**：选择实例 + Profile 启动，自动在独立窗口中打开 DSH Web GUI。
+- **插件市场**：浏览 [dsh-plug.in](https://dsh-plug.in) 插件，按稳定版 / 测试版 / 最新提交三渠道安装到任意实例的 Profile，支持按 Profile 启用 / 禁用。
+- **系统托盘**：双击打开最近使用的实例；菜单可停止运行中的实例；退出启动器时自动清理全部实例进程。
+- **其他**：关闭窗口最小化到托盘、开机自启、中英双语界面。
 
-![Preview](docs/img.png)
+## 开发
 
-## Features
-
-- **Multi-version installs**: query the npm registry and install multiple `@deepseek-ai/dsh` versions into isolated directories that never interfere with each other.
-- **Multi-instance management**: create several instances per version, each with its own name, profile, and runtime environment variables.
-- **Three DSH_HOME modes**:
-  - Reuse/share an existing DSH_HOME;
-  - Automatically adopt the user's default `~/.dsh`;
-  - Create a dedicated DSH_HOME per instance (created and registered under the app data directory automatically).
-- **One-click launch**: pick an instance and a profile on the home page and start; the launcher parses the URL printed by `dsh web` and opens the DSH Web GUI in a dedicated webview window.
-- **Environment overrides**: add or remove runtime environment variables on the instance settings page; they are injected into the child process at launch (`DSH_HOME` is reserved and always injected by the launcher from the selected DSH_HOME).
-- **Plugin marketplace**: browse plugins published to the [DSH plugin market](https://dsh-plug.in/) (`https://dsh-plug.in/api/plugins.json`), search by name/description, and install them into any instance's profile:
-  - **Three version channels**, distinguished by colored icon letters — **stable** (releases / npm `latest`, green **R**), **beta** (pre-releases / npm `next`, yellow **B**) and **alpha** (latest commit on GitHub, red **A**);
-  - The install flow is a wizard: pick plugin → pick version channel/version → pick instance → pick profile → create a task → start installing;
-  - Dependency build scripts are allowed automatically (`onlyBuiltDependencies: ['*']`), and the installed plugin is registered in the profile's `package.json` (`dsh.profile.bundles` + `dependencies`) plus a `cordis.patch.yml` insert row for non-bundle plugins.
-- **Per-profile plugin management** (instance settings → Plugins tab): filter by profile to view the plugins installed in it, enable/disable individual plugins, and multi-select for batch enable/disable. Core `@deepseek-ai/*` packages are hidden.
-- **System tray**:
-  - Double-click: opens the most recently focused instance's profile page; with a single running instance opens it directly, otherwise shows the launcher;
-  - Right-click menu: a "Running profiles" submenu offers Open / Stop for each running instance, plus "Open launcher / Quit launcher".
-  - Quitting the launcher terminates all instance processes so none are orphaned.
-- **Close to tray** (can be disabled in Settings).
-- **Launch at login** (Settings toggle, registered for real via the autostart plugin).
-- **i18n**: Simplified Chinese / English; JSON locale files are discovered, hot-reloaded, and precompiled by `@intlify/unplugin-vue-i18n` through Vite.
-
-## Interface
-
-- **Home**: left panel (instance status → linked instance/profile dropdowns → large launch button → instance list / instance settings); right side reserved for a news area.
-- **Download**: sidebar with "Create instance / Download plugins"; the create page groups installable versions by stable/prerelease; clicking a version opens the naming page (instance name, DSH_HOME choice, "Start download" at the bottom). The plugins page is the marketplace; a three-step wizard (plugin → version channel → instance/profile) creates an install task.
-- **Instances**: name, version, DSH_HOME, profile, runtime status and URL, edit/delete.
-- **Instance settings → Plugins**: filter by profile, enable/disable plugins, multi-select batch enable/disable (`@deepseek-ai/*` core plugins hidden).
-- **Settings**: language, close to tray, launch at login, DSH_HOME management.
-
-## Development
-
-Prerequisites: Node ≥ 20, pnpm, stable Rust (Xcode Command Line Tools), macOS 12+.
+前置：Node ≥ 20、pnpm、Rust stable（Xcode Command Line Tools）、macOS 12+。
 
 ```bash
-pnpm install
-pnpm tauri dev      # dev mode (Vite frontend + debug backend)
-pnpm tauri build    # bundle (produces a .dmg / .app for Apple Silicon)
+pnpm install        # 安装依赖
+pnpm tauri dev      # 开发模式（前端 Vite + 后端 debug）
+pnpm tauri build    # 打包（Apple Silicon .dmg）
+pnpm dev            # 浏览器预览（localStorage mock）
 ```
 
-Preview the frontend in a browser without the backend (mock layer backed by localStorage):
+## 运行数据
 
-```bash
-pnpm dev            # open http://localhost:1420
-```
+数据目录：`~/Library/Application Support/in.dsh-plug.dsh-launcher/`
 
-## Runtime data
+- `config.json`：DSH_HOME / 版本 / 实例 / 设置
+- `versions/<版本>/`：各版本隔离安装目录
+- `homes/<实例名>/`：实例专属 DSH_HOME（如选择）
+- `logs/`：启动器与实例运行日志
 
-- Launcher config and data: `%APPDATA%\in.dsh-plug.dsh-launcher\`
-  - `config.json`: DSH_HOMEs / versions / instances / settings
-  - `versions/<version>/`: isolated install directory per version
-  - `homes/<instance name>/`: dedicated DSH_HOME (when chosen)
-  - `logs/<instance id>.log`: instance runtime logs
+## 架构
 
-## Architecture
-
-- `src/`: Vue 3 frontend (pages, store, API wrapper, i18n)
-- `src/api/index.ts`: unified API layer — `invoke` under Tauri, localStorage mock in a plain browser
-- `src-tauri/src/`
-  - `config.rs`: config model and atomic persistence
-  - `commands.rs`: all Tauri commands (CRUD / version installs / instance start-stop / settings)
-  - `plugins.rs`: plugin marketplace — catalog fetch, per-channel versions (npm dist-tags + GitHub commits), install task, profile manifest registration and enable/disable
-  - `tasks.rs`: background task system (create-instance / install-plugin) with progress and log events
-  - `process.rs`: instance process management (spawn / kill / URL parsing / env injection / logs)
-  - `tray.rs`: system tray and dynamic menu
-  - `windows.rs`: instance webview window management
+- `src/`：Vue 3 前端（页面、store、API 封装、i18n）；浏览器环境走 localStorage mock。
+- `src-tauri/src/`：Rust 后端——`config`（配置持久化）、`commands`（Tauri 命令）、`plugins`（插件市场与安装）、`tasks`（后台任务）、`process`（实例进程管理）、`terminal`（内置终端）、`tray`（托盘）、`windows`（窗口管理）。
 
 ## License
 
