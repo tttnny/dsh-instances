@@ -213,7 +213,7 @@
       "viewLog": "查看日志",
       "unknown": "未知"
     },
-    "logOpened": "已在文件管理器中定位日志：{path}"
+    "logOpened": "已在访达中定位日志：{path}"
   },
   "instanceEdit": {
     "titleNew": "新建实例",
@@ -285,7 +285,7 @@
     "portSavedRandom": "已保存，将使用随机端口",
     "openDirectory": "打开目录",
     "viewLog": "查看日志",
-    "filesHint": "打开该实例的 DSH_HOME 目录，或在文件管理器中定位该实例的运行日志",
+    "filesHint": "打开该实例的 DSH_HOME 目录，或在访达中定位该实例的运行日志",
     "dirOpened": "已在访达中打开目录：{path}",
     "logOpened": "已在访达中定位日志：{path}",
     "skillsDesc": "管理该实例 DSH_HOME 下的 SKILL（<HOME>/skills，各实例按 HOME 共享）。支持从仓库安装/更新（以 commit/tag 识别版本）、导入 SKILL.md 或粘贴内容创建；DSH 会监视该目录，无需重启实例即可生效。",

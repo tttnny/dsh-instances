@@ -49,12 +49,12 @@ Tauri 2 + Vue 3 + TypeScript + Sass + vue-router + vue-i18n + Arco Design Vue.
 
 ## Development
 
-Prerequisites: Node ≥ 20, pnpm, stable Rust (MSVC toolchain), WebView2.
+Prerequisites: Node ≥ 20, pnpm, stable Rust (Xcode Command Line Tools), macOS 12+.
 
 ```bash
 pnpm install
 pnpm tauri dev      # dev mode (Vite frontend + debug backend)
-pnpm tauri build    # bundle (produces exe / msi / nsis installers)
+pnpm tauri build    # bundle (produces a .dmg / .app for Apple Silicon)
 ```
 
 Preview the frontend in a browser without the backend (mock layer backed by localStorage):

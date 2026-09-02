@@ -20,3 +20,6 @@ src-tauri/icon-source.png
 Thumbs.db
 *.local
 .idea/
+
+# AgentTeams runtime state
+.agent-teams/

@@ -213,7 +213,7 @@
       "viewLog": "View log",
       "unknown": "Unknown"
     },
-    "logOpened": "Log revealed in file manager: {path}"
+    "logOpened": "Log revealed in Finder: {path}"
   },
   "instanceEdit": {
     "titleNew": "New instance",
@@ -285,7 +285,7 @@
     "portSavedRandom": "Saved; a random port will be used",
     "openDirectory": "Open directory",
     "viewLog": "View log",
-    "filesHint": "Open this instance's DSH_HOME directory, or reveal its runtime log in the file manager",
+    "filesHint": "Open this instance's DSH_HOME directory, or reveal its runtime log in Finder",
     "dirOpened": "Directory opened in Finder: {path}",
     "logOpened": "Log revealed in Finder: {path}",
     "skillsDesc": "Manage skills in the DSH_HOME of this instance (<HOME>/skills, shared per HOME). Install/update from repositories (versioned by commit/tag), import a SKILL.md, or paste content to create one; DSH watches the directory so changes apply without a restart.",

@@ -1,4 +1,4 @@
-// Release-note classifier/linking tests.
+// Release-note classifier/linking tests (macOS-only artifacts).
 // Run: node --test ci/release-notes.test.mjs
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -7,39 +7,31 @@ import { classify, render } from './release-notes-render.mjs'
 const TAG = 'v0.1.0-dev.42'
 const REPO = 'acme/dsh-launcher'
 
-const COMMITS = ['feat: add theme switcher', 'fix: hide console windows', 'ci: build linux packages']
+const COMMITS = ['feat: add theme switcher', 'fix: hide window on close', 'ci: build macos dmg']
 
 const ASSETS = [
-  'dsh-launcher_0.1.0_x64-setup.exe',
-  'dsh-launcher_0.1.0_x64_en-US.msi',
-  'dsh-launcher_0.1.0_amd64.AppImage',
-  'dsh-launcher_0.1.0_amd64.deb',
-  'dsh-launcher-0.1.0-1.x86_64.rpm',
-  'dsh-launcher_0.1.0_aarch64.AppImage',
-  'dsh-launcher_0.1.0_aarch64.deb',
   'dsh-launcher_0.1.0_aarch64.dmg',
-  'dsh-launcher_0.1.0_x64.dmg',
+  'dsh-launcher_0.1.0_arm64.dmg',
 ]
 
-test('classifier maps known artifact names to platform/arch/kind', () => {
-  const expected = {
-    'dsh-launcher_0.1.0_x64-setup.exe': { arch: 'x86_64', kind: 'exe' },
-    'dsh-launcher_0.1.0_x64_en-US.msi': { arch: 'x86_64', kind: 'msi' },
-    'dsh-launcher_0.1.0_amd64.AppImage': { arch: 'x86_64', kind: 'AppImage' },
-    'dsh-launcher_0.1.0_aarch64.deb': { arch: 'arm64', kind: 'deb' },
-    'dsh-launcher_0.1.0_x64.dmg': { arch: 'x86_64', kind: 'dmg' },
-    'dsh-launcher-0.1.0-1.x86_64.rpm': { arch: 'x86_64', kind: 'rpm' },
-  }
-  for (const [name, exp] of Object.entries(expected)) {
+test('classifier maps the macOS aarch64 dmg artifact', () => {
+  for (const name of ASSETS) {
     const c = classify(name)
     assert.ok(c, `expected ${name} to classify`)
-    assert.equal(c.arch, exp.arch)
-    assert.equal(c.kind, exp.kind)
+    assert.equal(c.arch, 'arm64')
+    assert.equal(c.kind, 'dmg')
   }
 })
 
-test('classifier rejects unknown or non-artifact files', () => {
-  for (const bad of ['README.md', 'dsh-launcher_0.1.0_amd64.exe.blockmap', 'totally-unrelated.zip']) {
+test('classifier rejects unknown or non-macOS artifacts', () => {
+  for (const bad of [
+    'README.md',
+    'dsh-launcher_0.1.0_x64.dmg', // Intel builds are no longer produced
+    'dsh-launcher_0.1.0_x64-setup.exe',
+    'dsh-launcher_0.1.0_amd64.deb',
+    'dsh-launcher-0.1.0-1.x86_64.rpm',
+    'totally-unrelated.zip',
+  ]) {
     assert.equal(classify(bad), null, `${bad} must not classify`)
   }
 })

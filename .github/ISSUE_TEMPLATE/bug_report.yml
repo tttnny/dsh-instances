@@ -16,9 +16,8 @@ body:
     attributes:
       label: OS Version - 操作系统
       options:
-        - Windows
-        - MacOS
-        - Linux
+        - MacOS (Apple Silicon)
+        - MacOS (Intel)
     validations:
       required: true
 
@@ -49,8 +48,8 @@ body:
     attributes:
       label: Existing behavior - 现有行为
       description: |
-        Please describe the problem you have encountered carefully. For logs, open the launcher's log directory (`%APPDATA%\in.dsh-plug.dsh-launcher\logs\latest.log` on Windows) or the Tasks page, and paste the relevant excerpts here.
-        请仔细描述你所遇到的问题。日志可打开启动器日志目录（Windows 为 `%APPDATA%\in.dsh-plug.dsh-launcher\logs\latest.log`）或「任务」页面，并将相关片段粘贴到这里。
+        Please describe the problem you have encountered carefully. For logs, open the launcher's log directory (`~/Library/Application Support/in.dsh-plug.dsh-launcher/logs/latest.log` on macOS) or the Tasks page, and paste the relevant excerpts here.
+        请仔细描述你所遇到的问题。日志可打开启动器日志目录（macOS 为 `~/Library/Application Support/in.dsh-plug.dsh-launcher/logs/latest.log`）或「任务」页面，并将相关片段粘贴到这里。
     validations:
       required: true
 

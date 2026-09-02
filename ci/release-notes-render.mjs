@@ -1,29 +1,20 @@
-// Release-note renderer + artifact classifier.
+// Release-note renderer + artifact classifier (macOS-only builds).
 // Shared by ci/update-release-notes.sh (CLI) and ci/release-notes.test.mjs (tests).
 
 /**
  * Maps a release asset file name to a { platform, arch, kind, name } record,
- * or null when the name does not match any known artifact.
+ * or null when the name does not match the macOS DMG artifact. Only Apple
+ * Silicon DMGs are produced (dsh-launcher_<version>_aarch64.dmg).
  */
 export function classify(name) {
-  // RPM uses a different scheme: dsh-launcher-0.1.0-1.x86_64.rpm
-  const rpm = /^dsh-launcher-\d[\w.-]*\.(x86_64|aarch64)\.rpm$/.exec(name)
-  if (rpm) {
-    return { name, arch: rpm[1] === 'x86_64' ? 'x86_64' : 'arm64', kind: 'rpm' }
-  }
-  const m = /^dsh-launcher_\d[\w.-]*_(x64|arm64|amd64|aarch64).*\.(exe|msi|AppImage|deb|rpm|dmg)$/.exec(name)
+  const m = /^dsh-launcher_\d[\w.-]*_(aarch64|arm64)\.dmg$/.exec(name)
   if (!m) return null
-  const archRaw = m[1]
-  return {
-    name,
-    arch: archRaw === 'amd64' || archRaw === 'x64' ? 'x86_64' : 'arm64',
-    kind: m[2],
-  }
+  return { name, arch: 'arm64', kind: 'dmg' }
 }
 
-const PLATFORM_OF_KIND = { exe: 'Windows', msi: 'Windows', AppImage: 'Linux', deb: 'Linux', rpm: 'Linux', dmg: 'macOS' }
-const KIND_LABEL_EN = { exe: 'NSIS setup', msi: 'MSI', AppImage: 'AppImage', deb: 'DEB', rpm: 'RPM', dmg: 'DMG' }
-const KIND_ORDER = { exe: 0, msi: 1, AppImage: 2, deb: 3, rpm: 4, dmg: 5 }
+const PLATFORM_OF_KIND = { dmg: 'macOS' }
+const KIND_LABEL_EN = { dmg: 'DMG' }
+const KIND_ORDER = { dmg: 0 }
 
 /**
  * Renders the English-only "Downloads" table plus the "What's Changed"

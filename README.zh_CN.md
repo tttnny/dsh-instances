@@ -49,12 +49,12 @@ Tauri 2 + Vue 3 + TypeScript + Sass + vue-router + vue-i18n + Arco Design Vue。
 
 ## 开发
 
-前置：Node ≥ 20、pnpm、Rust stable（含 MSVC 工具链）、WebView2。
+前置：Node ≥ 20、pnpm、Rust stable（Xcode Command Line Tools）、macOS 12+。
 
 ```bash
 pnpm install
 pnpm tauri dev      # 开发模式（前端 Vite + 后端 debug）
-pnpm tauri build    # 打包（生成 exe / msi / nsis 安装包）
+pnpm tauri build    # 打包（生成 Apple Silicon 的 .dmg / .app）
 ```
 
 前端无后端时可在浏览器预览（mock 层，数据存 localStorage）：
