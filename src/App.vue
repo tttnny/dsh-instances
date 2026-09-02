@@ -8,6 +8,13 @@ import { api } from '@/api'
 import { Message } from '@arco-design/web-vue'
 import ModpackImportDialog from '@/components/ModpackImportDialog.vue'
 import PluginFileImportDialog from '@/components/PluginFileImportDialog.vue'
+import {
+  MENU_NAVIGATE_EVENTS,
+  MENU_REFRESH_EVENTS,
+  handleAppKeydown,
+  resolveMenuRoute,
+  type ShortcutRoute,
+} from '@/shortcuts'
 
 const route = useRoute()
 const router = useRouter()
@@ -45,7 +52,54 @@ onMounted(async () => {
     router.push({ name: 'setup' })
   }
   await setupModpackEntryPoints()
+  window.addEventListener('keydown', onAppKeydown)
+  await setupMenuListeners()
 })
+
+// --- In-app shortcuts (t4): Cmd/Ctrl+1/2/3, Cmd+, K/R, Esc --------------------
+
+function goShortcut(name: ShortcutRoute) {
+  if (route.name === name) return
+  void router.push({ name }).catch(() => undefined)
+}
+
+function refreshShortcut() {
+  void Promise.allSettled([store.refreshInstances(), store.refreshTasks(), store.checkRuntime()])
+}
+
+function backShortcut() {
+  if (route.name === 'home') return
+  router.back()
+}
+
+function onAppKeydown(e: KeyboardEvent) {
+  if (handleAppKeydown(e, { go: goShortcut, refresh: refreshShortcut, back: backShortcut })) {
+    e.preventDefault()
+  }
+}
+
+let unlistenMenu: (() => void)[] = []
+
+/** Backend menu events (t3 Rust menu) drive the same routes as the shortcuts. */
+async function setupMenuListeners() {
+  if (!isTauri) return
+  try {
+    const { listen } = await import('@tauri-apps/api/event')
+    for (const name of MENU_NAVIGATE_EVENTS) {
+      const un = await listen<unknown>(name, (event) => {
+        const target = resolveMenuRoute(event.payload)
+        if (target) goShortcut(target)
+      })
+      unlistenMenu.push(un)
+    }
+    for (const name of MENU_REFRESH_EVENTS) {
+      const un = await listen(name, () => refreshShortcut())
+      unlistenMenu.push(un)
+    }
+  } catch {
+    // Event bridge unavailable (browser preview); shortcuts still work.
+  }
+}
 
 // --- Modpack entry points: .dspack/.tgz drag-drop + dsh-launcher://pack?url= ---
 
@@ -161,8 +215,11 @@ async function openWindowWhenReady(id: string) {
 
 onUnmounted(() => {
   themeMedia.removeEventListener('change', onSystemThemeChange)
+  window.removeEventListener('keydown', onAppKeydown)
   unlistenDrag?.()
   unlistenDeepLink?.()
+  unlistenMenu.forEach((un) => un())
+  unlistenMenu = []
 })
 
 watch(

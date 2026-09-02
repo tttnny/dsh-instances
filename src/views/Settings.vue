@@ -23,6 +23,18 @@ const LOG_LEVEL_OPTIONS = computed<{ value: LogLevel; label: string }[]>(() => [
   { value: 'error', label: t('settings.logLevel.error') },
 ])
 
+// --- In-app shortcut reference (t4): mirrors src/shortcuts.ts ------------------
+
+const shortcutRows = computed<{ label: string; keys: string[] }[]>(() => [
+  { label: t('settings.shortcuts.goHome'), keys: ['\u2318 / Ctrl', '1'] },
+  { label: t('settings.shortcuts.goDownload'), keys: ['\u2318 / Ctrl', '2'] },
+  { label: t('settings.shortcuts.goSettings'), keys: ['\u2318 / Ctrl', '3'] },
+  { label: t('settings.shortcuts.openSettings'), keys: ['\u2318 / Ctrl', ','] },
+  { label: t('settings.shortcuts.goTasks'), keys: ['\u2318 / Ctrl', 'K'] },
+  { label: t('settings.shortcuts.refresh'), keys: ['\u2318 / Ctrl', 'R'] },
+  { label: t('settings.shortcuts.back'), keys: ['Esc'] },
+])
+
 // --- General settings -------------------------------------------------------
 
 async function patchSettings(patch: Parameters<typeof api.updateSettings>[0]) {
@@ -309,6 +321,22 @@ const homeColumns = computed(() => [
 
     <div class="dl-card">
       <div class="dl-card-title">
+        <h3>{{ t('settings.shortcuts.title') }}</h3>
+      </div>
+      <p class="news-source-hint">{{ t('settings.shortcuts.desc') }}</p>
+      <div class="shortcut-list">
+        <div v-for="row in shortcutRows" :key="row.label" class="shortcut-row">
+          <span class="shortcut-label">{{ row.label }}</span>
+          <span class="shortcut-keys">
+            <kbd v-for="k in row.keys" :key="k" class="shortcut-kbd">{{ k }}</kbd>
+          </span>
+        </div>
+      </div>
+      <p class="news-source-hint">{{ t('settings.shortcuts.note') }}</p>
+    </div>
+
+    <div class="dl-card">
+      <div class="dl-card-title">
         <h3>{{ t('settings.proxy.title') }}</h3>
       </div>
       <a-form :model="store.settings" layout="vertical" class="settings-form">
@@ -543,5 +571,50 @@ const homeColumns = computed(() => [
 .update-up-to-date {
   color: var(--color-text-3);
   font-size: 13px;
+}
+
+.shortcut-list {
+  display: flex;
+  flex-direction: column;
+  max-width: 560px;
+  margin: 12px 0;
+  border: 1px solid var(--color-border-2);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.shortcut-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+
+  &:not(:last-child) {
+    border-bottom: 1px solid var(--color-border-2);
+  }
+}
+
+.shortcut-label {
+  font-size: 13px;
+  color: var(--color-text-1);
+}
+
+.shortcut-keys {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.shortcut-kbd {
+  padding: 2px 8px;
+  font-size: 12px;
+  font-family: inherit;
+  color: var(--color-text-2);
+  background: var(--color-fill-2);
+  border: 1px solid var(--color-border-2);
+  border-bottom-width: 2px;
+  border-radius: 6px;
+  white-space: nowrap;
 }
 </style>

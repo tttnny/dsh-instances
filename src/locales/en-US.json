@@ -168,6 +168,20 @@
       "empty": "No SKILL repositories yet"
     },
     "skillRepoExists": "This repo is already listed",
+    "shortcuts": {
+      "title": "Keyboard shortcuts",
+      "desc": "Use these shortcuts inside the app window to navigate quickly; the macOS native menu uses the same bindings, driven by backend menu events.",
+      "action": "Action",
+      "keys": "Keys",
+      "goHome": "Go to Launch",
+      "goDownload": "Go to Download",
+      "goSettings": "Go to Settings",
+      "openSettings": "Open Settings (Preferences)",
+      "goTasks": "Go to Tasks",
+      "refresh": "Refresh instance and task status",
+      "back": "Go back (blurs inputs when typing)",
+      "note": "Use \u2318 on macOS and Ctrl on Windows / Linux; \u2318/Ctrl+R only refreshes in-app state and never reloads the page; ordinary editing keys inside inputs are never hijacked."
+    },
     "proxy": {
       "title": "Proxy",
       "enabled": "Enable proxy",

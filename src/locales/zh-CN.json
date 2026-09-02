@@ -168,6 +168,20 @@
       "empty": "暂无 SKILL 仓库"
     },
     "skillRepoExists": "该仓库已在列表中",
+    "shortcuts": {
+      "title": "键盘快捷键",
+      "desc": "在应用窗口内可用以下快捷键快速跳转；macOS 原生菜单栏的快捷键与此处保持一致，由后端菜单事件驱动。",
+      "action": "操作",
+      "keys": "按键",
+      "goHome": "前往启动页",
+      "goDownload": "前往下载页",
+      "goSettings": "前往设置页",
+      "openSettings": "打开设置（偏好设置）",
+      "goTasks": "前往任务页",
+      "refresh": "刷新实例与任务状态",
+      "back": "返回上一页（输入框内仅退出输入）",
+      "note": "macOS 用 ⌘，Windows / Linux 用 Ctrl；⌘/Ctrl+R 只刷新应用内状态，不会重载页面；输入框内的普通编辑按键不会被劫持。"
+    },
     "proxy": {
       "title": "代理",
       "enabled": "启用代理",
