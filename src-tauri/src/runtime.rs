@@ -18,21 +18,44 @@ pub struct RuntimeStatus {
 }
 
 async fn probe(program: &str) -> ToolStatus {
-    let mut cmd = tokio::process::Command::new(program);
-    crate::process::hide_console(&mut cmd);
-    let output = cmd.arg("--version").output().await;
+    // GUI-launched apps inherit a minimal PATH with no shell rc, so a plain
+    // Command::new(program) misses fnm/Homebrew/user-installed tools. Walk the
+    // PATH entries ourselves, then fall back to the known tool directories
+    // (fnm layouts, ~/Library/pnpm, Homebrew, …).
+    let mut candidates: Vec<PathBuf> =
+        std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()).collect();
+    for dir in tool_fallback_bins() {
+        if !candidates.contains(&dir) {
+            candidates.push(dir);
+        }
+    }
 
-    match output {
-        Ok(out) if out.status.success() => ToolStatus {
-            installed: true,
-            version: Some(String::from_utf8_lossy(&out.stdout).trim().to_string()),
-            path: None,
-        },
-        _ => ToolStatus {
-            installed: false,
-            version: None,
-            path: None,
-        },
+    for dir in candidates {
+        let exe = if dir.as_os_str().is_empty() {
+            PathBuf::from(program)
+        } else {
+            dir.join(program)
+        };
+        if !exe.is_file() {
+            continue;
+        }
+        let mut cmd = tokio::process::Command::new(&exe);
+        crate::process::hide_console(&mut cmd);
+        if let Ok(out) = cmd.arg("--version").output().await {
+            if out.status.success() {
+                let version = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                return ToolStatus {
+                    installed: true,
+                    version: Some(version),
+                    path: Some(exe.to_string_lossy().into_owned()),
+                };
+            }
+        }
+    }
+    ToolStatus {
+        installed: false,
+        version: None,
+        path: None,
     }
 }
 
@@ -66,11 +89,89 @@ fn local_node_bin_dir(node_dir: &Path) -> PathBuf {
     node_dir.join("bin")
 }
 
-/// Ensures the standard macOS paths (/usr/local/bin, /opt/homebrew/bin, user bin)
-/// are in PATH even when launched from Finder GUI without an interactive shell.
+/// fnm-managed Node bin directories, most specific first:
+/// 1. the `default` alias (`<fnm-root>/aliases/default/bin`)
+/// 2. `<fnm-root>/current/bin`
+/// 3. every `<fnm-root>/node-versions/<v>/installation/bin`, newest first.
+/// Both the modern XDG layout (`~/.local/share/fnm`) and the legacy layout
+/// (`~/.fnm`) are scanned.
+fn fnm_bin_dirs(home: &Path) -> Vec<PathBuf> {
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    for root in [home.join(".fnm"), home.join(".local").join("share").join("fnm")] {
+        let alias = root.join("aliases").join("default").join("bin");
+        if alias.is_dir() && !dirs.contains(&alias) {
+            dirs.push(alias);
+        }
+        let current = root.join("current").join("bin");
+        if current.is_dir() && !dirs.contains(&current) {
+            dirs.push(current);
+        }
+        let versions = root.join("node-versions");
+        if let Ok(rd) = std::fs::read_dir(&versions) {
+            let mut found: Vec<(semver::Version, PathBuf)> = rd
+                .filter_map(|e| {
+                    let e = e.ok()?;
+                    let name = e.file_name().to_string_lossy().into_owned();
+                    let ver = name
+                        .strip_prefix('v')
+                        .and_then(|s| semver::Version::parse(s).ok())?;
+                    Some((ver, e.path()))
+                })
+                .collect();
+            found.sort_by(|a, b| b.0.cmp(&a.0)); // newest first
+            for (_, p) in found {
+                let bin = p.join("installation").join("bin");
+                if bin.is_dir() && !dirs.contains(&bin) {
+                    dirs.push(bin);
+                }
+            }
+        }
+    }
+    dirs
+}
+
+/// Known directories where user-level tools (node/pnpm via fnm, standalone
+/// pnpm, bun, Homebrew) may live — used as a probe fallback when PATH alone
+/// would miss them.
+fn tool_fallback_bins() -> Vec<PathBuf> {
+    let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
+    let mut dirs = fnm_bin_dirs(&home);
+    for d in [
+        home.join("Library").join("pnpm"),
+        home.join(".bun").join("bin"),
+        home.join(".cargo").join("bin"),
+        home.join(".local").join("bin"),
+        PathBuf::from("/opt/homebrew/bin"),
+        PathBuf::from("/usr/local/bin"),
+    ] {
+        if d.is_dir() && !dirs.contains(&d) {
+            dirs.push(d);
+        }
+    }
+    dirs
+}
+
+/// Ensures the standard macOS tool paths — fnm-managed Node, Homebrew, and
+/// user bin directories — are on PATH even when launched from Finder without
+/// an interactive shell, so node/pnpm/git resolve for spawned children.
 pub fn ensure_macos_paths() {
-    let home = std::env::var("HOME").unwrap_or_default();
-    let common_paths = [
+    let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
+    let mut parts: Vec<PathBuf> =
+        std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()).collect();
+
+    let mut extra: Vec<PathBuf> = Vec::new();
+    if !home.as_os_str().is_empty() {
+        for d in [
+            home.join(".local").join("bin"),
+            home.join("Library").join("pnpm"),
+            home.join(".bun").join("bin"),
+            home.join(".cargo").join("bin"),
+        ] {
+            extra.push(d);
+        }
+        extra.extend(fnm_bin_dirs(&home));
+    }
+    for d in [
         "/opt/homebrew/bin",
         "/opt/homebrew/sbin",
         "/usr/local/bin",
@@ -79,33 +180,15 @@ pub fn ensure_macos_paths() {
         "/bin",
         "/usr/sbin",
         "/sbin",
-    ];
-
-    let current_path = std::env::var_os("PATH").unwrap_or_default();
-    let mut parts: Vec<PathBuf> = std::env::split_paths(&current_path).collect();
-
-    if !home.is_empty() {
-        let user_bins = [
-            format!("{home}/.local/bin"),
-            format!("{home}/Library/pnpm"),
-            format!("{home}/.bun/bin"),
-            format!("{home}/.cargo/bin"),
-        ];
-        for ub in user_bins {
-            let p = PathBuf::from(ub);
-            if p.is_dir() && !parts.contains(&p) {
-                parts.push(p);
-            }
-        }
+    ] {
+        extra.push(PathBuf::from(d));
     }
 
-    for cp in common_paths {
-        let p = PathBuf::from(cp);
+    for p in extra {
         if p.is_dir() && !parts.contains(&p) {
             parts.push(p);
         }
     }
-
     if let Ok(joined) = std::env::join_paths(parts) {
         std::env::set_var("PATH", joined);
     }
@@ -247,6 +330,9 @@ fn extract_node_archive(archive: &Path, node_dir: &Path) -> Result<(), String> {
     }
     std::fs::create_dir_all(node_dir).map_err(|e| format!("创建 Node.js 目录失败: {e}"))?;
 
+    let file = std::fs::File::open(archive).map_err(|e| format!("打开安装包失败: {e}"))?;
+    let gz = flate2::read::GzDecoder::new(file);
+    let mut tar = tar::Archive::new(gz);
     for entry in tar.entries().map_err(|e| format!("读取安装包失败: {e}"))? {
         let mut entry = entry.map_err(|e| format!("读取安装包条目失败: {e}"))?;
         let path = entry
@@ -452,4 +538,46 @@ async fn do_install_node(
     crate::tasks::ensure_pnpm_pub(app, state, task_id).await?;
     crate::tasks::push_task_log_pub(app, state, task_id, "pnpm 已就绪").await;
     Ok(got)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_tree(home: &Path) {
+        std::fs::create_dir_all(
+            home.join(".local/share/fnm/node-versions/v20.11.0/installation/bin"),
+        )
+        .unwrap();
+        std::fs::create_dir_all(
+            home.join(".local/share/fnm/node-versions/v24.16.0/installation/bin"),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn fnm_dirs_prefer_default_alias_then_newest_version() {
+        let home = std::env::temp_dir().join(format!("fnm-test-{}", uuid::Uuid::new_v4()));
+        make_tree(&home);
+        // No alias: newest installed version's bin wins.
+        let dirs = fnm_bin_dirs(&home);
+        assert!(!dirs.is_empty());
+        assert!(dirs[0].ends_with("node-versions/v24.16.0/installation/bin"));
+        // With a default alias, it ranks first.
+        let alias = home.join(".local/share/fnm/aliases/default/bin");
+        std::fs::create_dir_all(&alias).unwrap();
+        let dirs = fnm_bin_dirs(&home);
+        assert_eq!(dirs[0], alias);
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn fnm_dirs_handles_legacy_root() {
+        let home = std::env::temp_dir().join(format!("fnm-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(home.join(".fnm/current/bin")).unwrap();
+        let dirs = fnm_bin_dirs(&home);
+        assert_eq!(dirs.len(), 1);
+        assert!(dirs[0].ends_with(".fnm/current/bin"));
+        std::fs::remove_dir_all(&home).ok();
+    }
 }

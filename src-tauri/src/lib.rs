@@ -245,13 +245,23 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
-        .run(|app_handle, event| {
+        .run(|app_handle, event| match event {
+            // macOS: clicking the Dock icon must bring a hidden (closed-to-
+            // tray) main window back and focus it.
+            tauri::RunEvent::Reopen { .. } => {
+                if let Some(win) = app_handle.get_webview_window("main") {
+                    let _ = win.show();
+                    let _ = win.unminimize();
+                    let _ = win.set_focus();
+                }
+            }
             // Terminate child processes when the launcher exits so no DSH
             // instance is left orphaned.
-            if let tauri::RunEvent::Exit = event {
+            tauri::RunEvent::Exit => {
                 let state = app_handle.state::<AppState>();
                 process::kill_all(&state);
                 terminal::kill_all(&state);
             }
+            _ => {}
         });
 }
