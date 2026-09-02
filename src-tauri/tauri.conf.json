@@ -20,7 +20,9 @@
         "minHeight": 620,
         "center": true,
         "visible": true,
-        "decorations": false
+        "decorations": true,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true
       }
     ],
     "security": {
@@ -36,7 +38,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": ["dmg"],
     "category": "DeveloperTool",
     "shortDescription": "DSH multi-version launcher",
     "longDescription": "Install and manage multiple DeepSeek Harness (DSH) versions and instances with independent or shared DSH_HOME roots, profiles and environment overrides.",
@@ -44,13 +46,10 @@
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
-      "icons/icon.icns",
-      "icons/icon.ico"
+      "icons/icon.icns"
     ],
-    "windows": {
-      "nsis": {
-        "installMode": "both"
-      }
+    "macOS": {
+      "minimumSystemVersion": "12.0"
     }
   }
 }

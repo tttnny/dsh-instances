@@ -27,33 +27,19 @@ fn url_re() -> &'static Regex {
 }
 
 pub fn npm() -> &'static str {
-    if cfg!(windows) {
-        "npm.cmd"
-    } else {
-        "npm"
-    }
+    "npm"
 }
 
 pub fn pnpm() -> &'static str {
-    if cfg!(windows) {
-        "pnpm.cmd"
-    } else {
-        "pnpm"
-    }
+    "pnpm"
 }
 
 pub fn node() -> &'static str {
     "node"
 }
 
-/// Hides the console window on Windows (CREATE_NO_WINDOW) so spawning
-/// npm.cmd / pnpm.cmd / node.exe never flashes a terminal next to the
-/// launcher GUI. No-op on other platforms.
+/// Helper for command building; on macOS Unix this is a no-op passthrough.
 pub fn hide_console(cmd: &mut Command) -> &mut Command {
-    #[cfg(windows)]
-    {
-        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
-    }
     cmd
 }
 

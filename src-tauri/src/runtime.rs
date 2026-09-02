@@ -58,20 +58,56 @@ fn local_node_dir(data_dir: &Path) -> PathBuf {
 }
 
 fn local_node_exe(node_dir: &Path) -> PathBuf {
-    if cfg!(windows) {
-        node_dir.join("node.exe")
-    } else {
-        node_dir.join("bin").join("node")
-    }
+    node_dir.join("bin").join("node")
 }
 
-/// Directory containing node/npm/npx shims for PATH purposes (on Windows
-/// everything sits at the root of the unpacked archive).
+/// Directory containing node/npm/npx shims for PATH purposes.
 fn local_node_bin_dir(node_dir: &Path) -> PathBuf {
-    if cfg!(windows) {
-        node_dir.to_path_buf()
-    } else {
-        node_dir.join("bin")
+    node_dir.join("bin")
+}
+
+/// Ensures the standard macOS paths (/usr/local/bin, /opt/homebrew/bin, user bin)
+/// are in PATH even when launched from Finder GUI without an interactive shell.
+pub fn ensure_macos_paths() {
+    let home = std::env::var("HOME").unwrap_or_default();
+    let common_paths = [
+        "/opt/homebrew/bin",
+        "/opt/homebrew/sbin",
+        "/usr/local/bin",
+        "/usr/local/sbin",
+        "/usr/bin",
+        "/bin",
+        "/usr/sbin",
+        "/sbin",
+    ];
+
+    let current_path = std::env::var_os("PATH").unwrap_or_default();
+    let mut parts: Vec<PathBuf> = std::env::split_paths(&current_path).collect();
+
+    if !home.is_empty() {
+        let user_bins = [
+            format!("{home}/.local/bin"),
+            format!("{home}/Library/pnpm"),
+            format!("{home}/.bun/bin"),
+            format!("{home}/.cargo/bin"),
+        ];
+        for ub in user_bins {
+            let p = PathBuf::from(ub);
+            if p.is_dir() && !parts.contains(&p) {
+                parts.push(p);
+            }
+        }
+    }
+
+    for cp in common_paths {
+        let p = PathBuf::from(cp);
+        if p.is_dir() && !parts.contains(&p) {
+            parts.push(p);
+        }
+    }
+
+    if let Ok(joined) = std::env::join_paths(parts) {
+        std::env::set_var("PATH", joined);
     }
 }
 
@@ -97,20 +133,9 @@ pub fn ensure_local_node_on_path(data_dir: &Path) {
     }
 }
 
-/// dist archive file name for this platform.
+/// dist archive file name for macOS aarch64 (Apple Silicon).
 fn node_archive_name(version: &str) -> String {
-    #[cfg(windows)]
-    {
-        format!("node-{version}-win-x64.zip")
-    }
-    #[cfg(target_os = "macos")]
-    {
-        format!("node-{version}-darwin-arm64.tar.gz")
-    }
-    #[cfg(all(unix, not(target_os = "macos")))]
-    {
-        format!("node-{version}-linux-x64.tar.gz")
-    }
+    format!("node-{version}-darwin-arm64.tar.gz")
 }
 
 /// Latest LTS version (e.g. `v22.14.0`) from the dist index, primary source
@@ -222,63 +247,49 @@ fn extract_node_archive(archive: &Path, node_dir: &Path) -> Result<(), String> {
     }
     std::fs::create_dir_all(node_dir).map_err(|e| format!("创建 Node.js 目录失败: {e}"))?;
 
-    /// Shared per-entry write with the root component stripped.
-    fn write_entry(
-        node_dir: &Path,
-        raw: &Path,
-        is_dir: bool,
-        reader: &mut dyn std::io::Read,
-    ) -> Result<(), String> {
-        let rel: PathBuf = raw.components().skip(1).collect();
+    for entry in tar.entries().map_err(|e| format!("读取安装包失败: {e}"))? {
+        let mut entry = entry.map_err(|e| format!("读取安装包条目失败: {e}"))?;
+        let path = entry
+            .path()
+            .map_err(|e| format!("读取安装包条目名失败: {e}"))?
+            .into_owned();
+        let clean: PathBuf = path
+            .components()
+            .filter(|c| matches!(c, std::path::Component::Normal(_)))
+            .collect();
+        let rel: PathBuf = clean.components().skip(1).collect();
         if rel.as_os_str().is_empty() {
-            return Ok(());
+            continue;
         }
         let target = node_dir.join(rel);
-        if is_dir {
+        let kind = entry.header().entry_type();
+        if kind.is_dir() {
             std::fs::create_dir_all(&target).ok();
-            return Ok(());
+            continue;
         }
         if let Some(parent) = target.parent() {
             std::fs::create_dir_all(parent).map_err(|e| format!("创建目录失败: {e}"))?;
         }
-        std::io::copy(
-            reader,
-            &mut std::fs::File::create(&target).map_err(|e| format!("创建文件失败: {e}"))?,
-        )
-        .map_err(|e| format!("解压条目失败: {e}"))?;
-        Ok(())
-    }
-
-    if cfg!(windows) {
-        let file = std::fs::File::open(archive).map_err(|e| format!("打开安装包失败: {e}"))?;
-        let mut zip = zip::ZipArchive::new(file).map_err(|e| format!("解析安装包失败: {e}"))?;
-        for i in 0..zip.len() {
-            let mut entry = zip
-                .by_index(i)
-                .map_err(|e| format!("读取安装包条目失败: {e}"))?;
-            let Some(name) = entry.enclosed_name().map(|p| p.to_path_buf()) else {
-                continue;
-            };
-            write_entry(node_dir, &name, entry.is_dir(), &mut entry)?;
+        if kind.is_symlink() {
+            // Node dist ships bin/npm, bin/npx and bin/corepack as symlinks
+            // into lib/node_modules; materialize them so PATH shims work.
+            let link = entry
+                .link_name()
+                .map_err(|e| format!("读取链接目标失败: {e}"))?
+                .ok_or_else(|| "符号链接缺少目标".to_string())?;
+            std::os::unix::fs::symlink(&link, &target)
+                .map_err(|e| format!("创建符号链接失败 {target:?}: {e}"))?;
+            continue;
         }
-    } else {
-        let file = std::fs::File::open(archive).map_err(|e| format!("打开安装包失败: {e}"))?;
-        let gz = flate2::read::GzDecoder::new(file);
-        let mut tar = tar::Archive::new(gz);
-        for entry in tar.entries().map_err(|e| format!("读取安装包失败: {e}"))? {
-            let mut entry = entry.map_err(|e| format!("读取安装包条目失败: {e}"))?;
-            let path = entry
-                .path()
-                .map_err(|e| format!("读取安装包条目名失败: {e}"))?
-                .into_owned();
-            let clean: PathBuf = path
-                .components()
-                .filter(|c| matches!(c, std::path::Component::Normal(_)))
-                .collect();
-            let is_dir = entry.header().entry_type().is_dir();
-            if entry.header().entry_type().is_file() || is_dir {
-                write_entry(node_dir, &clean, is_dir, &mut entry)?;
-            }
+        if kind.is_file() {
+            // Preserve the archive's permission bits (node binary must stay
+            // executable; macOS extraction defaults would strip it to 0644).
+            let mode = entry.header().mode().ok().unwrap_or(0o755) & 0o7777;
+            use std::os::unix::fs::PermissionsExt;
+            let mut file =
+                std::fs::File::create(&target).map_err(|e| format!("创建文件失败: {e}"))?;
+            std::io::copy(&mut entry, &mut file).map_err(|e| format!("解压条目失败: {e}"))?;
+            std::fs::set_permissions(&target, std::fs::Permissions::from_mode(mode)).ok();
         }
     }
     Ok(())

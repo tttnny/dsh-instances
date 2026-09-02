@@ -162,63 +162,26 @@ fn prepare_shim(
         ));
     }
 
-    if cfg!(windows) {
-        let body = format!(
-            "@echo off\r\n\"{}\" \"{}\" %*\r\n",
-            crate::process::node(),
-            bin_js.display()
-        );
-        std::fs::write(bin_dir.join("dsh.cmd"), &body)
-            .map_err(|e| format!("写入 dsh.cmd 失败: {e}"))?;
-        std::fs::write(bin_dir.join("dsh.bat"), &body)
-            .map_err(|e| format!("写入 dsh.bat 失败: {e}"))?;
-    } else {
-        let dsh = bin_dir.join("dsh");
-        let body = format!(
-            "#!/bin/sh\nexec \"{}\" \"{}\" \"$@\"\n",
-            crate::process::node(),
-            bin_js.display()
-        );
-        std::fs::write(&dsh, body).map_err(|e| format!("写入 dsh 失败: {e}"))?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&dsh, std::fs::Permissions::from_mode(0o755))
-                .map_err(|e| format!("设置 dsh 可执行权限失败: {e}"))?;
-        }
+    let dsh = bin_dir.join("dsh");
+    let body = format!(
+        "#!/bin/sh\nexec \"{}\" \"{}\" \"$@\"\n",
+        crate::process::node(),
+        bin_js.display()
+    );
+    std::fs::write(&dsh, body).map_err(|e| format!("写入 dsh 失败: {e}"))?;
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&dsh, std::fs::Permissions::from_mode(0o755))
+            .map_err(|e| format!("设置 dsh 可执行权限失败: {e}"))?;
     }
     Ok(bin_dir)
 }
 
-/// The shell program for the platform: PowerShell on Windows (pwsh when
-/// available, else the built-in Windows PowerShell), the user's $SHELL (or
-/// /bin/sh) on unix. portable-pty's CommandBuilder inherits the base env, so
+/// The shell program for macOS: the user's $SHELL (defaulting to /bin/zsh).
+/// portable-pty's CommandBuilder inherits the base env, so
 /// the shell resolves through the injected PATH (dsh shim first).
 fn shell_program() -> String {
-    if cfg!(windows) {
-        // Prefer PowerShell Core (pwsh) for modern syntax; fall back to the
-        // built-in Windows PowerShell 5.1 (powershell.exe), which ships with
-        // every Windows install. Check PATH first (pwsh is commonly added),
-        // then the standard Program Files location.
-        let in_path = std::env::var_os("PATH")
-            .map(|p| std::env::split_paths(&p).any(|dir| dir.join("pwsh.exe").exists()))
-            .unwrap_or(false);
-        if in_path {
-            return "pwsh.exe".to_string();
-        }
-        if let Some(pf) = std::env::var_os("PROGRAMFILES") {
-            let pwsh = std::path::Path::new(&pf)
-                .join("PowerShell")
-                .join("7")
-                .join("pwsh.exe");
-            if pwsh.exists() {
-                return pwsh.to_string_lossy().to_string();
-            }
-        }
-        "powershell.exe".to_string()
-    } else {
-        std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string())
-    }
+    std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string())
 }
 
 /// Spawns the shell for an instance inside a fresh PTY, returning the
@@ -494,14 +457,15 @@ mod tests {
     use crate::process::node as node_bin;
 
     #[test]
-    fn shim_body_escapes_paths() {
+    fn shim_body_is_posix_exec() {
         let body = format!(
-            "@echo off\r\n\"{}\" \"{}\" %*\r\n",
+            "#!/bin/sh\nexec \"{}\" \"{}\" \"$@\"\n",
             node_bin(),
-            "C:\\Program Files\\nodejs\\node.exe"
+            "/Users/x/Library/Application Support/DSH/node_modules/@deepseek-ai/dsh/lib/bin.js"
         );
-        assert!(body.contains("\"C:\\Program Files\\nodejs\\node.exe\""));
-        assert!(body.ends_with("%*\r\n"));
+        assert!(body.starts_with("#!/bin/sh"));
+        assert!(body.contains("\"/Users/x/Library/Application Support/DSH/node_modules"));
+        assert!(body.ends_with("\"$@\"\n"));
     }
 
     #[test]
@@ -523,20 +487,8 @@ mod tests {
         assert!(!super::find_dsr(b"\x1b[6x")); // not a query
     }
 
-    #[cfg(windows)]
     #[test]
-    fn windows_shell_is_powershell_based() {
-        let shell = super::shell_program().to_lowercase();
-        // Must be PowerShell (Core or Windows PowerShell), never cmd.
-        assert!(
-            shell.ends_with("pwsh.exe") || shell.ends_with("powershell.exe"),
-            "unexpected windows shell: {shell}"
-        );
-    }
-
-    #[cfg(not(windows))]
-    #[test]
-    fn unix_shell_is_user_shell_or_sh() {
+    fn macos_shell_is_user_shell_or_zsh() {
         let shell = super::shell_program();
         assert!(!shell.is_empty());
     }

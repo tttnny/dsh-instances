@@ -931,34 +931,16 @@ fn reveal_log_file(
 ) -> Result<String, String> {
     let path_str = log_path.to_string_lossy().to_string();
     if log_path.exists() {
-        crate::log_info!("在文件管理器中定位日志文件 {path_str}");
-        #[cfg(target_os = "windows")]
-        {
-            use std::os::windows::process::CommandExt;
-            let status = std::process::Command::new("explorer.exe")
-                .arg(format!("/select,{}", log_path.display()))
-                .creation_flags(0x0800_0000)
-                .spawn()
-                .and_then(|mut c| c.wait());
-            if status.is_ok() {
-                return Ok(path_str);
-            }
-            crate::log_warn!("explorer /select 失败，改用默认打开方式");
+        crate::log_info!("在访达中定位日志文件 {path_str}");
+        let status = std::process::Command::new("open")
+            .arg("-R")
+            .arg(&log_path)
+            .spawn()
+            .and_then(|mut c| c.wait());
+        if status.is_ok() {
+            return Ok(path_str);
         }
-        #[cfg(target_os = "macos")]
-        {
-            let status = std::process::Command::new("open")
-                .arg("-R")
-                .arg(&log_path)
-                .spawn()
-                .and_then(|mut c| c.wait());
-            if status.is_ok() {
-                return Ok(path_str);
-            }
-            crate::log_warn!("open -R 失败，改用默认打开方式");
-        }
-        // Fallback: open the file with its default application. This also
-        // covers Linux (no built-in file-selection reveal).
+        crate::log_warn!("open -R 失败，改用默认打开方式");
         open::that(&log_path).map_err(|e| format!("打开日志文件失败: {e}"))?;
         Ok(path_str)
     } else {
@@ -1045,96 +1027,6 @@ pub fn open_instance_directory(
     );
     open::that(&home).map_err(|e| format!("打开目录失败: {e}"))?;
     Ok(home.to_string_lossy().to_string())
-}
-
-// ---------------------------------------------------------------------------
-// Launch shortcut (issue #9)
-// ---------------------------------------------------------------------------
-
-/// Percent-encodes one URI query value (non-ASCII and reserved chars).
-fn uri_encode(value: &str) -> String {
-    let mut out = String::new();
-    for b in value.as_bytes() {
-        match *b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                out.push(*b as char)
-            }
-            _ => out.push_str(&format!("%{b:02X}")),
-        }
-    }
-    out
-}
-
-/// Default shortcut icon when the instance has none (bundled launcher icon).
-const DEFAULT_ICON_PNG: &[u8] = include_bytes!("../icons/128x128.png");
-
-/// Writes a Windows Internet Shortcut (.url) that launches an instance via
-/// `dsh-launcher://launch?instance=<name>&profile=<profile>`. The shortcut
-/// icon is the instance icon converted to .ico (Windows shortcuts only accept
-/// ICO); with no icon the launcher icon is used instead (issue #14).
-#[tauri::command]
-pub async fn create_launch_shortcut(
-    state: State<'_, AppState>,
-    instance_id: String,
-    profile: String,
-    dest_path: String,
-) -> Result<(), String> {
-    let (name, icon, home) = {
-        let cfg = state.config.lock().unwrap();
-        let inst = cfg
-            .instances
-            .iter()
-            .find(|i| i.id == instance_id)
-            .ok_or_else(|| "实例不存在".to_string())?;
-        let home = cfg
-            .homes
-            .iter()
-            .find(|h| h.id == inst.home_id)
-            .map(|h| h.path.clone())
-            .ok_or_else(|| "DSH_HOME 不存在".to_string())?;
-        (inst.name.clone(), inst.icon.clone(), home)
-    };
-
-    let url = format!(
-        "dsh-launcher://launch?instance={}&profile={}",
-        uri_encode(&name),
-        uri_encode(profile.trim()),
-    );
-
-    // Resolve the icon as PNG bytes: local file → remote URL → launcher
-    // default. Then convert to ICO — Windows .url shortcuts ignore PNG icons.
-    let icon_png: Vec<u8> = match icon.as_deref() {
-        Some("local") => std::fs::read(crate::icons::local_icon_path(&home, &instance_id))
-            .unwrap_or_else(|_| DEFAULT_ICON_PNG.to_vec()),
-        Some(remote) if remote.starts_with("https://") || remote.starts_with("http://") => {
-            crate::icons::fetch_square_icon_png(remote)
-                .await
-                .unwrap_or_else(|_| DEFAULT_ICON_PNG.to_vec())
-        }
-        _ => DEFAULT_ICON_PNG.to_vec(),
-    };
-    let icon_file = match crate::icons::png_to_ico_bytes(&icon_png) {
-        Ok(ico) => {
-            let dir = state.data_dir.join("icons");
-            std::fs::create_dir_all(&dir).ok();
-            let ico_path = dir.join(format!("shortcut-{instance_id}.ico"));
-            std::fs::write(&ico_path, ico)
-                .map(|_| ico_path)
-                .map_err(|e| format!("写入 ICO 图标失败: {e}"))?
-        }
-        Err(_) => std::env::current_exe().map_err(|e| format!("获取启动器路径失败: {e}"))?,
-    };
-    let content = format!(
-        "[InternetShortcut]\r\nURL={url}\r\nIconFile={}\r\nIconIndex=0\r\n",
-        icon_file.display()
-    );
-    let dest = std::path::PathBuf::from(dest_path.trim());
-    if dest.as_os_str().is_empty() {
-        return Err("保存路径不能为空".to_string());
-    }
-    std::fs::write(&dest, content).map_err(|e| format!("写入快捷方式失败: {e}"))?;
-    crate::log_info!("已创建启动快捷方式 {}", dest.display());
-    Ok(())
 }
 
 // ---------------------------------------------------------------------------

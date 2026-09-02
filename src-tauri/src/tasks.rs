@@ -921,13 +921,9 @@ async fn ensure_pnpm(
     Ok(local)
 }
 
-/// Path of the pnpm executable inside a tools dir (Windows uses .cmd).
+/// Path of the pnpm executable inside a tools dir.
 fn local_pnpm_path(tools_dir: &std::path::Path) -> std::path::PathBuf {
-    if cfg!(windows) {
-        tools_dir.join("pnpm.cmd")
-    } else {
-        tools_dir.join("pnpm")
-    }
+    tools_dir.join("pnpm")
 }
 
 // ---------------------------------------------------------------------------

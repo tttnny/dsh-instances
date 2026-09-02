@@ -38,8 +38,7 @@ pub struct AppState {
     pub terminals: tokio::sync::Mutex<HashMap<String, terminal::TerminalSession>>,
 }
 
-/// Extracts a `dsh-launcher://…` deep link from process arguments (Windows
-/// protocol activation passes the URL as an argv entry).
+/// Extracts a `dsh-launcher://…` deep link from process arguments.
 pub(crate) fn deep_link_from_args(args: &[String]) -> Option<String> {
     args.iter()
         .find(|a| a.starts_with("dsh-launcher://"))
@@ -112,6 +111,8 @@ pub fn run() {
                     let _ = win.hide();
                 }
             }
+            // Populate common macOS environment paths so GUI launcher can locate tools
+            runtime::ensure_macos_paths();
             let data_dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&data_dir)?;
             // A managed Node.js installed by a previous one-click install
@@ -207,7 +208,6 @@ pub fn run() {
             commands::open_instance_log,
             commands::open_instance_directory,
             commands::get_launcher_directory,
-            commands::create_launch_shortcut,
             pending_deep_link,
             icons::set_instance_icon,
             icons::clear_instance_icon,

@@ -15,23 +15,13 @@ env:
 
 jobs:
   quality:
-    name: Quality (${{ matrix.platform }})
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: ubuntu-22.04
-            platform: linux
-          - runner: windows-latest
-            platform: windows
-          - runner: macos-14
-            platform: macos
-    runs-on: ${{ matrix.runner }}
+    name: Quality (macos)
+    runs-on: macos-14
     steps:
       - uses: actions/checkout@v5
       - name: Install native prerequisites
         shell: bash
-        run: ./ci/install-${{ matrix.platform }}.sh
+        run: ./ci/install-macos.sh
       - uses: pnpm/action-setup@v5
       - uses: actions/setup-node@v5
         with:
@@ -43,7 +33,7 @@ jobs:
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
-          key: ${{ matrix.platform }}-quality
+          key: macos-quality
       - name: Install locked dependencies
         run: pnpm install --frozen-lockfile
       - name: Format check
@@ -96,46 +86,15 @@ jobs:
         run: ./ci/resolve-release.sh "$GITHUB_REF_TYPE" "$GITHUB_REF_NAME" "$GITHUB_RUN_NUMBER"
 
   build:
-    name: Package (${{ matrix.target }})
+    name: Package (macos-aarch64)
     needs: prepare
     if: github.event_name == 'push'
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - platform: windows
-            runner: windows-latest
-            target: x86_64-pc-windows-msvc
-            cache_key: windows-x86_64
-            # MSI 不可用：WiX 要求版本号预发布段为纯数字且 ≤65535，与
-            # 0.2.0-dev.N 的开发版本号冲突；Windows 分发统一走 NSIS。
-            bundle_args: --bundles nsis
-          - platform: linux
-            runner: ubuntu-22.04
-            target: x86_64-unknown-linux-gnu
-            cache_key: linux-x86_64
-            bundle_args: --bundles appimage,deb,rpm
-          - platform: linux
-            runner: ubuntu-24.04-arm
-            target: aarch64-unknown-linux-gnu
-            cache_key: linux-aarch64
-            bundle_args: --bundles appimage,deb
-          - platform: macos
-            runner: macos-14
-            target: aarch64-apple-darwin
-            cache_key: macos-aarch64
-            bundle_args: --bundles dmg
-          - platform: macos
-            runner: macos-15-intel
-            target: x86_64-apple-darwin
-            cache_key: macos-x86_64
-            bundle_args: --bundles dmg
-    runs-on: ${{ matrix.runner }}
+    runs-on: macos-14
     steps:
       - uses: actions/checkout@v5
       - name: Install platform prerequisites
         shell: bash
-        run: ./ci/install-${{ matrix.platform }}.sh
+        run: ./ci/install-macos.sh
       - uses: pnpm/action-setup@v5
       - uses: actions/setup-node@v5
         with:
@@ -143,11 +102,11 @@ jobs:
           cache: pnpm
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.target }}
+          targets: aarch64-apple-darwin
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
-          key: ${{ matrix.cache_key }}-release
+          key: macos-aarch64-release
       - name: Install locked dependencies
         run: pnpm install --frozen-lockfile
       - name: Stamp build version
@@ -162,7 +121,7 @@ jobs:
         with:
           releaseId: ${{ needs.prepare.outputs.release_id }}
           tagName: ${{ needs.prepare.outputs.tag }}
-          args: --target ${{ matrix.target }} ${{ matrix.bundle_args }}
+          args: --target aarch64-apple-darwin --bundles dmg
 
   update-release-notes:
     name: Update release notes

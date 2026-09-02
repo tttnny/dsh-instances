@@ -1513,16 +1513,10 @@ fn resolve_installed_name(dir: &std::path::Path, plugin_id: &str, spec: &str) ->
     None
 }
 
-/// Lock key for a profile directory. Windows filesystems are
-/// case-insensitive, so the key is lowercased there: two instances that share
-/// a DSH_HOME must contend for the same lock.
+/// Lock key for a profile directory. On macOS, APFS is typically case-preserving/insensitive,
+/// but keeping standard canonical path string is used for profile lock contention.
 fn profile_lock_key(profile_dir: &std::path::Path) -> String {
-    let raw = profile_dir.to_string_lossy().to_string();
-    if cfg!(windows) {
-        raw.to_lowercase()
-    } else {
-        raw
-    }
+    profile_dir.to_string_lossy().to_string()
 }
 
 /// The mutex guarding one profile directory, created on first use.
@@ -1698,19 +1692,11 @@ fn linked_store_dir(profile_dir: &std::path::Path) -> Option<String> {
 /// Whether two store paths point at the same store. pnpm records the
 /// versioned subdirectory (`<store>/v11`) while the launcher pins the base
 /// dir, so a path containing the other as a prefix also counts as a match.
-/// Windows filesystems are case-insensitive and pnpm may emit either slash.
+/// Checks whether two store paths match or one is an ancestor of the other.
 fn store_paths_match(a: &str, b: &str) -> bool {
-    let norm = |s: &str| {
-        let s = s.replace('/', "\\");
-        let s = s.trim_end_matches('\\');
-        if cfg!(windows) {
-            s.to_lowercase()
-        } else {
-            s.to_string()
-        }
-    };
+    let norm = |s: &str| s.trim_end_matches('/').to_string();
     let (a, b) = (norm(a), norm(b));
-    a == b || a.starts_with(&format!("{b}\\")) || b.starts_with(&format!("{a}\\"))
+    a == b || a.starts_with(&format!("{b}/")) || b.starts_with(&format!("{a}/"))
 }
 
 /// Whether the task's streamed log mentions pnpm's unexpected-store failure
@@ -2215,20 +2201,17 @@ mod tests {
 
     #[test]
     fn store_paths_match_handles_versioned_subdir_and_slashes() {
-        let base = "C:\\Users\\x\\AppData\\Roaming\\in.dsh-plug.dsh-launcher\\.pnpm-store";
+        let base = "/Users/x/Library/Application Support/in.dsh-plug.dsh-launcher/.pnpm-store";
         // `.modules.yaml` records the versioned subdir pnpm derived from the
         // pinned base.
-        assert!(store_paths_match(&format!("{base}\\v11"), base));
-        // Forward slashes and a trailing separator are equivalent.
+        assert!(store_paths_match(&format!("{base}/v11"), base));
+        // A trailing separator is equivalent.
         assert!(store_paths_match(
-            "C:/Users/x/AppData/Roaming/in.dsh-plug.dsh-launcher/.pnpm-store/v11/",
+            "/Users/x/Library/Application Support/in.dsh-plug.dsh-launcher/.pnpm-store/v11/",
             base
         ));
         // A genuinely different store (the user's global one) mismatches.
-        assert!(!store_paths_match(
-            "C:\\Users\\x\\AppData\\Local\\pnpm\\store\\v11",
-            base
-        ));
+        assert!(!store_paths_match("/Users/x/Library/pnpm/store/v11", base));
     }
 
     #[test]
@@ -2386,17 +2369,11 @@ mod tests {
 
     #[test]
     fn profile_lock_key_matches_paths_that_denote_one_profile() {
-        // Two instances sharing a DSH_HOME must contend for the same lock, so
-        // the key normalizes case on Windows (case-insensitive filesystem).
-        let a = std::path::Path::new("C:\\homes\\lab\\profiles\\web");
-        let b = std::path::Path::new("C:\\Homes\\Lab\\Profiles\\Web");
-        if cfg!(windows) {
-            assert_eq!(profile_lock_key(a), profile_lock_key(b));
-        } else {
-            assert_ne!(profile_lock_key(a), profile_lock_key(b));
-        }
+        let a = std::path::Path::new("/Users/lab/profiles/web");
+        let b = std::path::Path::new("/Users/lab/profiles/web");
+        assert_eq!(profile_lock_key(a), profile_lock_key(b));
         // Different profiles under one HOME never share a lock.
-        let other = std::path::Path::new("C:\\homes\\lab\\profiles\\tui");
+        let other = std::path::Path::new("/Users/lab/profiles/tui");
         assert_ne!(profile_lock_key(a), profile_lock_key(other));
     }
 

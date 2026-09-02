@@ -31,6 +31,9 @@ pub fn open_instance_window(
         .inner_size(1024.0, 576.0)
         .min_inner_size(800.0, 500.0)
         .center()
+        .decorations(true)
+        .title_bar_style(tauri::TitleBarStyle::Overlay)
+        .hidden_title(true)
         .build()
         .map_err(|e| e.to_string())?;
     record_focus(app, instance_id);

@@ -298,13 +298,9 @@ pub fn ensure_user_dsh_home(cfg: &mut Config) {
     });
 }
 
-/// Case-insensitive path equality (Windows filesystems are case-insensitive).
+/// Path equality.
 pub fn paths_equal(a: &Path, b: &Path) -> bool {
-    if cfg!(windows) {
-        a.to_string_lossy().to_lowercase() == b.to_string_lossy().to_lowercase()
-    } else {
-        a == b
-    }
+    a == b
 }
 
 /// Merge HOME records that point at the same path, keeping the first and
