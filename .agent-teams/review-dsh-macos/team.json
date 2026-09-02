@@ -1,0 +1,167 @@
+{
+  "name": "review-dsh-macos",
+  "id": "review-dsh-macos",
+  "description": "Review 最近两次提交（f5b9163 macOS 纯血化改造 + 6268cc2 fnm 探测/Dock 恢复修复）的正确性与质量，找出 bug、残留 Windows 逻辑、平台 API 误用与回归风险",
+  "captainSessionId": "session-cfcf184b-8726-4b19-beb7-ca013d60d3b8",
+  "createdAt": 1788378550833,
+  "members": [
+    {
+      "id": "de087c4f-79c9-42f7-98fe-f7c381e63aef",
+      "name": "rust-reviewer",
+      "role": "reviewer",
+      "provider": "agentrouter",
+      "model": "deepseek-v4-flash",
+      "reasoningEffort": "max",
+      "executionPrompt": "你是资深 Rust/Tauri macOS 桌面应用审查者。只做只读审查：可运行 cargo check / cargo test / cargo clippy（Rust 工具链已装于 ~/.cargo，先 source $HOME/.cargo/env），但不要修改任何源文件。",
+      "joinedAt": 1788378561539,
+      "status": "idle"
+    },
+    {
+      "id": "cb05f5e0-1638-4fd2-b186-195190a0896a",
+      "name": "frontend-ci-reviewer",
+      "role": "reviewer",
+      "provider": "agentrouter",
+      "model": "deepseek-v4-flash",
+      "reasoningEffort": "max",
+      "executionPrompt": "你是资深 Web 前端 (Vue3/TS) 与 GitHub Actions CI 审查者。只做只读审查：可运行 pnpm build 与 node --test ci/*.test.mjs 验证，但不要修改任何源文件。",
+      "joinedAt": 1788378561547,
+      "status": "idle"
+    }
+  ],
+  "tasks": [
+    {
+      "id": "t1",
+      "subject": "Rust/Tauri 后端改动审查（f5b9163 + 6268cc2）",
+      "description": "审查两个提交中的所有 Rust 端改动：git show f5b9163 与 git show 6268cc2 的 src-tauri/ 差异（相对各自父提交），重点是 runtime.rs（fnm 目录探测排序与去重、probe 显式逐目录执行、PATH 合并顺序、tar 解压权限位与 symlink）、lib.rs（RunEvent::Reopen 处理、CloseRequested hide 与托盘交互）、windows.rs（Overlay 标题栏 API）、terminal.rs / process.rs / plugins.rs / config.rs / tasks.rs / icons.rs / commands.rs 的 Windows 分支剥离是否干净无残留、Cargo.toml/tauri.conf.json 配置。可运行 source $HOME/.cargo/env && cargo check / cargo test / cargo clippy -- -D warnings 佐证（本机 arm64 macOS）。不要修改任何源文件。",
+      "status": "completed",
+      "dependencies": [],
+      "attempt": 1,
+      "createdAt": 1788378604266,
+      "updatedAt": 1788379314268,
+      "kind": "work",
+      "acceptance": [
+        "输出按严重级别（blocker/high/medium/low）归类的结构化 findings，每条含文件、行号（如适用）、问题描述与建议修复",
+        "覆盖：平台 API 误用（Tauri v2 macOS）、残留 Windows/跨平台死代码或注释、解压/权限/符号链接正确性、fnm 路径探测逻辑边界、并发与进程生命周期回归",
+        "若发现应提交但遗漏的测试或明显编译/测试失败问题，必须列为 finding",
+        "结论明确：verdict 通过或需修订"
+      ],
+      "deliverables": [
+        "rust-review-findings.md（可放 /tmp 或工作区临时位置，不得修改 src 下文件）"
+      ],
+      "assignee": "frontend-ci-reviewer",
+      "attemptId": "558358f0-e245-44e7-873d-e92a36343645",
+      "reassigning": false,
+      "output": "Rust/Tauri 端两提交审查完成。验证结果：cargo check --all-targets 通过（exit 0）；cargo test 通过（75 passed / 1 ignored，含 2 个新增 fnm 测试）；但 cargo fmt --all -- --check 失败（runtime.rs 3 处 hunk）且 cargo clippy --all-targets -- -D warnings 失败（runtime.rs:96-97 clippy::doc_lazy_continuation，rust 1.98，lib 与 lib-test 均报错）——这两条正是 ci.yml Quality(macos) job 的门禁命令，HEAD 上流水线必红。结论：verdict = needs_revision（2 high / 3 medium / 5 low）。亮点：Windows 分支剥离总体干净（无 cfg(windows)/powershell/.cmd/ico 代码残留，icons/commands/plugins 编译级干净），6268 的 fnm 探测排序与 tar 解压权限/符号链接逻辑正确且修复了 f5 引入的编译错误，PATH 合并语义合理；medium 级风险集中在 macOS 窗口生命周期（Reopen 不覆盖窗口销毁场景、无 ExitRequested 处理）、实例窗口 Overlay 样式叠在远端页面内容上、以及 f5 提交本身不可编译的历史问题；详见 findings。",
+      "verdict": "needs_revision",
+      "findings": [
+        {
+          "id": "t1-h1",
+          "severity": "high",
+          "problem": "HEAD (6268cc2) 无法通过 CI 质量门禁 clippy：`cargo clippy --all-targets -- -D warnings` 在 rust 1.98 stable 上报 2 个 clippy::doc_lazy_continuation 错误（runtime.rs:96-97，fnm_bin_dirs 新增的编号列表 doc 注释续行未缩进），lib 与 lib-test 两个 target 均失败（EXIT=101）。ci.yml 的 Quality (macos) job 恰好以 `cargo clippy ... -- -D warnings` 运行，故本次提交宣称的 macOS 流水线在 HEAD 上是红的。",
+          "requiredFix": "按 clippy 建议把 runtime.rs:96-97 续行缩进对齐（`///    Both ...` / `///    (~/.fnm) ...`）或将编号列表改为普通段落，然后本地重跑 `cargo clippy --all-targets -- -D warnings` 至全绿再提交。",
+          "file": "src-tauri/src/runtime.rs",
+          "line": 96
+        },
+        {
+          "id": "t1-h2",
+          "severity": "high",
+          "problem": "HEAD (6268cc2) 无法通过 CI 格式门禁：`cargo fmt --all -- --check` 失败，runtime.rs 有 3 处未按 rustfmt 默认风格格式化（fnm_bin_dirs 中 for root in [...] 长数组未拆分 — 行 100；tool_fallback_bins 与 ensure_macos_paths 中 `std::env::var_os(\"HOME\").map(PathBuf::from).unwrap_or_default()` 未换行 — 行 136/158，均为 6268cc2 新增代码）。ci.yml Quality job 首步即跑 `cargo fmt ... -- --check`，因此流水线在 HEAD 上必红。",
+          "requiredFix": "提交前运行 `cargo fmt --manifest-path src-tauri/Cargo.toml --all` 并复核 `--check` 通过（仅 runtime.rs 3 处 hunk，改动极小）。",
+          "file": "src-tauri/src/runtime.rs",
+          "line": 100
+        },
+        {
+          "id": "t1-m1",
+          "severity": "medium",
+          "problem": "f5b9163 自身不可编译：extract_node_archive 中删除了 `let file/gz/tar = tar::Archive::new(...)` 的初始化（连同 zip 分支一起删掉）却保留了 `tar.entries()` 循环，`tar` 未绑定 → 必然 E0425 编译错误（已核对 f5b9163 树内 runtime.rs 全文无任何 tar 绑定）。该错误状态被 edc512a（ci: trigger full macOS build pipeline，位于 f5 与 6268 之间）携带，意味着该 CI 触发提交上的 Rust 阶段（check/clippy/test）必然失败。6268cc2 已修复编译（commit message 亦自述此点），最终树可编译，但两条提交的中间态是坏的。",
+          "requiredFix": "最终树无需代码修复（已在 6268cc2 补回 runtime.rs:333-335 的 Archive 实例化）；建议整理历史（如 rebase/squash 使每个提交可编译）或在 CI 记录中知悉 edc512a 的失败为预期；后续提交保持每提交可编译的纪律。",
+          "file": "src-tauri/src/runtime.rs",
+          "line": 250
+        },
+        {
+          "id": "t1-m2",
+          "severity": "medium",
+          "problem": "Dock 恢复（RunEvent::Reopen）只覆盖 hide 场景，未覆盖窗口被真正 close/destroy 的场景：close-to-tray 仅在 minimize_to_tray=true（默认）时 prevent_close+hide；用户关闭该设置后点红按钮会销毁 main 窗口，此后 lib.rs:251-256（Reopen）、tray.rs:131-137（打开启动器）与 lib.rs:68-74（二次启动激活）都只对现存窗口 show()，get_webview_window(\"main\") 返回 None 时全部静默 no-op。同时应用没有任何 RunEvent::ExitRequested 处理：tauri-runtime-wry 在最后一个窗口 Destroyed 且无窗口时会发 ExitRequested 并默认 Exit（已核对 tauri-runtime-wry-2.11.4 源码 4313-4324 行），即最小化到托盘被关闭时，关掉最后一个窗口很可能直接退出整个启动器并连带 kill 所有运行中实例（无确认），或者停留在无窗口状态无法恢复——两条路径都不符合托盘常驻应用的预期。",
+          "requiredFix": "显式处理 RunEvent::ExitRequested：当 minimize_to_tray=false 且用户关闭主窗口时明确退出（带运行中实例确认）或 prevent 并隐藏；同时在 Reopen 处理器中，当 get_webview_window(\"main\") 为 None 时用与启动一致的参数重建主窗口（把主窗口 builder 提为可复用函数），保证 Dock 点击总能恢复。建议补充最小化/关闭/恢复的生命周期手工验证。",
+          "file": "src-tauri/src/lib.rs",
+          "line": 251
+        },
+        {
+          "id": "t1-m3",
+          "severity": "medium",
+          "problem": "实例窗口（remote WebviewUrl::External，即 DSH Web GUI）被加上 Overlay + hiddenTitle（windows.rs:34-36）：这些窗口加载的是外部站点内容，页面本身没有为 macOS 红绿灯预留顶部左边距、也没有 data-tauri-drag-region。改动后 traffic lights 悬浮在远端页面左上角内容之上（视觉遮挡/可点击区域重叠），且窗口不再能通过标题栏拖动（覆盖层模式下标题条区域完全被 webview 占用）。f5 提交说明称实例窗口\"同样适配原生装饰\"，但只有启动器自身前端（main）做了 78px 预留，远端 DSH GUI 无法随启动器定制。",
+          "requiredFix": "核对实例窗口实际渲染效果：若 DSH 页面未预留红绿灯安全区/拖拽区，应移除实例窗口的 title_bar_style(Overlay)/hidden_title（保留标准标题栏），Overlay 仅用于本地前端可适配的 main 窗口；或在远端 GUI 侧增加 macOS 顶部 inset 与 data-tauri-drag-region（超出启动器可控范围）。",
+          "file": "src-tauri/src/windows.rs",
+          "line": 34
+        },
+        {
+          "id": "t1-l1",
+          "severity": "low",
+          "problem": "probe() 对每个候选目录顺序 spawn `--version` 且无超时：若 PATH/fallback 中某个候选（包装脚本等待 stdin、损坏二进制等）挂起，.output().await 永久阻塞，get_runtime_status 与 start_install_node_task 的前置探测都会卡死（前端状态转圈）。多候选串行遍历放大了暴露面。",
+          "requiredFix": "用 tokio::time::timeout（如 3-5 秒）包裹每次 cmd.output().await，超时按未命中继续下一个候选。",
+          "file": "src-tauri/src/runtime.rs",
+          "line": 44
+        },
+        {
+          "id": "t1-l2",
+          "severity": "low",
+          "problem": "paths_equal 改为纯路径相等（a == b），但默认 APFS 大小写不敏感（case-insensitive）：同一物理目录的不同大小写写法（如自动加入的 ~/.dsh 与配置/整合包清单里手写的 ~/.DSH、不同 case 的 HOME 路径）不会被 dedupe_homes 合并、ensure_user_dsh_home 会重复添加、modpack 导入的 home 匹配（modpack.rs:1518）会失配。删除 Windows 分支时未考虑 macOS 文件系统同样大小写不敏感（plugins.rs 的注释也承认 'APFS is typically case-preserving/insensitive'）。",
+          "requiredFix": "改为当两侧路径都存在时用 std::fs::canonicalize 比较（落盘真实 case），不存在时回退字符串相等；并补一个大小写变体测试。",
+          "file": "src-tauri/src/config.rs",
+          "line": 302
+        },
+        {
+          "id": "t1-l3",
+          "severity": "low",
+          "problem": "Windows 剥离残留（代码/资产/注释）：process.rs:41-44 hide_console 现在是纯透传 no-op 却保留 'Helper for command building' 语义并遍布调用点，易误导后续维护；过期注释仍引用 Windows/Linux：commands.rs:921-924 reveal_log_file 文档（'Windows Explorer, macOS Finder... other platforms'）、process.rs:73-76（'On Windows, pnpm hard-links...'）、terminal.rs:273-275/307（cmd.exe DSR）、lib.rs:87-89（'Register ... (Windows/Linux)'）、plugins.rs:1515-1516 注释措辞；assets 残留：src-tauri/icons/icon.ico 与 Square*.png 等 Windows 图标未被 tauri.conf.json 引用但仍在仓库。",
+          "requiredFix": "纯血化收尾：删除 no-op hide_console 及调用处（或改为直接调用），改写上述过期注释指向 macOS 语义，删除未引用的 Windows 图标资产（icon.ico/Square*.png）。",
+          "file": "src-tauri/src/process.rs",
+          "line": 41
+        },
+        {
+          "id": "t1-l4",
+          "severity": "low",
+          "problem": "工具链识别覆盖面仅 fnm（含自定义 FNM_DIR 未支持）+ Homebrew + bun/cargo/Library-pnpm：nvm（~/.nvm/versions/node/*/bin）、volta（~/.volta/bin）、mise/asdf shims 用户在 GUI 启动下仍探测不到 node，会误报未安装并诱导一键安装第二套运行时；另外 ensure_macos_paths/probe 把 fnm node-versions 下全部已装版本目录都并入 PATH（default 别名之后仅作兜底），PATH 噪音与预期\"默认版本优先\"语义略有不符。",
+          "requiredFix": "若产品意图是覆盖主流 Node 管理工具，补充 ~/.volta/bin、~/.nvm/versions/node/*/bin（semver 降序）、~/.asdf/shims 与 FNM_DIR 环境变量探测；否则在 UI/文档中明示支持矩阵；PATH 只并入 aliases/default 与 current 命中项可减少噪音。",
+          "file": "src-tauri/src/runtime.rs",
+          "line": 98
+        },
+        {
+          "id": "t1-l5",
+          "severity": "low",
+          "problem": "遗漏测试：本轮最敏感的新逻辑没有单元测试覆盖——extract_node_archive 的权限位保留（bin/node 0755 不被 umask 剥掉）与符号链接重建（bin/npm/npx/corepack 相对目标）；ensure_macos_paths 的合并顺序/去重/幂等；probe 的 PATH 优先于 fallback 及失败候选继续尝试的行为。现有测试仅覆盖 fnm 目录布局（fnm_dirs_prefer_default_alias_then_newest_version / fnm_dirs_handles_legacy_root）。",
+          "requiredFix": "补测试：构造最小 tar.gz（tar crate 打包 dir/file/symlink/权限位）验证解压后文件 mode 与符号链接目标；用临时 HOME+PATH 环境验证 ensure_macos_paths 结果顺序与重复运行幂等；用临时目录树验证 probe 命中顺序。",
+          "file": "src-tauri/src/runtime.rs",
+          "line": 543
+        }
+      ]
+    },
+    {
+      "id": "t2",
+      "subject": "前端与 CI 改动审查（f5b9163 + 6268cc2）",
+      "description": "审查两个提交中的前端与 CI 改动：git show f5b9163 与 git show 6268cc2 中 src/、.github/、ci/、package.json 差异。重点：App.vue 移除自绘窗口按钮与 78px 红绿灯避让、InstanceEdit.vue/api/index.ts/locales 中快捷方式全链路移除是否干净、CI quality/build 收敛为 macos-14 aarch64 dmg 的 YAML 正确性、install-windows/linux.sh 删除后无残留引用、release-notes-render/test 与单平台产物一致性。可运行 pnpm build 与 node --test ci/ 验证。不要修改任何源文件。",
+      "status": "completed",
+      "dependencies": [],
+      "attempt": 1,
+      "createdAt": 1788378604275,
+      "updatedAt": 1788379000544,
+      "kind": "work",
+      "acceptance": [
+        "输出按严重级别归类的结构化 findings，每条含文件、行号（如适用）、问题描述与建议修复",
+        "覆盖：残留 Windows 快捷方式/文案引用、语言包与 UI 一致性、App.vue 红绿灯安全间距与拖拽行为、CI workflow 语法与矩阵收敛正确性、release-notes 测试与 classifier 一致性",
+        "若发现 CI 会失败或前端构建/类型错误，必须列为 finding 并给出复现命令",
+        "结论明确：verdict 通过或需修订"
+      ],
+      "deliverables": [
+        "frontend-ci-review-findings.md（可放 /tmp 或工作区临时位置，不得修改 src 下文件）"
+      ],
+      "assignee": "rust-reviewer",
+      "attemptId": "9fa51ac3-ee49-4e72-b03b-532bea02e1a1",
+      "reassigning": false,
+      "output": "Verdict: 通过（pass）— 无阻塞问题，未发现会导致 CI 失败或前端构建/类型错误的问题。6268cc2 仅含 Rust 改动（lib.rs/runtime.rs），无前端/CI 内容。\n\n验证证据（commandsRun）：\n- `pnpm build`（vue-tsc --noEmit + vite build）→ exit 0，无类型错误（与 ci.yml quality 同命令）\n- `node --test ci/release-notes.test.mjs ci/bump-version.test.mjs` → 10/10 pass（与 ci.yml integration 精确同调用形式；注意 `node --test ci/` 裸目录形式在 Node 24 下报 MODULE_NOT_FOUND，但 CI 从未这样调用）\n- `node ci/check-versions.mjs` → versions in sync: 0.2.4\n- YAML 解析 .github/workflows/ci.yml 通过（6 个 jobs）\n- grep 扫描：src/ 无 createShortcut/shortcut/.url/window-controls/win32/平台分支残留；全仓无 install-linux.sh/install-windows.sh 引用（两文件已删且无残留引用）；en/zh 语言包 key 集合完全对称\n- 现实产物名（dsh-launcher_0.2.4-dev.N_aarch64.dmg / 0.2.4_aarch64.dmg）分类/渲染为 macOS|arm64 单行表格\n- package.json 在两个提交中零改动；快捷方式移除干净（InstanceEdit.vue 按钮+函数、api.createLaunchShortcut、两个语言包 createShortcut/shortcutCreated key 均同步删除，无孤儿引用）\n\nFindings（按严重级）：\n[medium] F1 跨域观察（属 Rust 文件，需 t1/运行期 QA）：src-tauri/src/windows.rs:34-36（f5b9163 新增 decorations(true)+TitleBarStyle::Overlay+hidden_title）作用于加载外部 http URL（DSH Web GUI）的实例窗口：红绿灯将悬浮覆盖该页面左上角内容，且外部页面无法声明 data-tauri-drag-region/startDragging，窗口将失去原生标题栏拖拽（改动前为标准标题栏）。建议实机验证实例窗口，必要时保留标准标题栏或给嵌入 GUI 留出顶部间距。\n[low] F2 .github/ISSUE_TEMPLATE/bug_report.yml:19-21、52-53、31：OS 下拉仍含 Windows/Linux，日志路径指引仍为 Windows `%APPDATA%\\in.dsh-plug.dsh-launcher\\logs\\latest.log`，且文案称\"版本号显示在标题栏\"（现为 Overlay+hiddenTitle 无标题）。建议收敛为 macOS 选项、真实 macOS 日志路径并修正文案。\n[low] F3 ci/release-notes-render.mjs:10,14,24-26 与 ci/release-notes.test.mjs:12-22：classifier/下载表仍保留 exe/msi/AppImage/deb/rpm 全套 Windows/Linux 分类与测试夹具，但 CI 已收敛为单 aarch64 dmg。测试全部通过、与实现一致（非 bug），但属\"纯血 macOS\"方向下的死分支，建议收窄为 dmg 以保持 hard-fail 语义有效。\n[low] F4 src/locales：zh-CN.json:289-290 / en-US.json:289-290 已改为\"访达/Finder\"，但同块 filesHint（288 行）与 settings.dataDir.logOpened（zh/en 216 行，Settings.vue:107 使用）仍写\"文件管理器/file manager\"，同批文案术语不一致，建议统一。\n[low] F5 src/App.vue:351：padding:0 20px 0 78px 无条件生效；`pnpm dev` 浏览器 mock 模式（无红绿灯）会出现 78px 空置左沟槽（仅观感，可考虑按 isTauri 条件化）。主窗口红绿灯安全间距本身合理（头部 52px 高，78px 为标准 insets）。\n\n其他确认无问题的项：App.vue 拖拽守卫已同步移除 .window-controls 并保留菜单/按钮/data-no-drag 排除；原生关闭按钮与 Rust CloseRequested→minimize_to_tray 逻辑（lib.rs:157）衔接正确；移除 close()/minimize() 后无孤儿调用；dsh-launcher://launch deep-link 前端处理（App.vue:105-142）保留无害（scheme 仍在 macOS 注册）；ci.yml 收敛正确（macos-14 + aarch64-apple-darwin + dmg、缓存 key、tauri-action args 一致，install-macos.sh 有执行位且一直存在）；图标清单与 src-tauri/icons/ 文件齐全（另：icon.ico 文件仍被跟踪但已移出 bundle —— 属 Rust 侧可清理项，供 t1 参考）。"
+    }
+  ],
+  "taskSeq": 2,
+  "phase": "running",
+  "approvedAt": 1788378620154
+}

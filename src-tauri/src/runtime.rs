@@ -90,14 +90,19 @@ fn local_node_bin_dir(node_dir: &Path) -> PathBuf {
 }
 
 /// fnm-managed Node bin directories, most specific first:
+///
 /// 1. the `default` alias (`<fnm-root>/aliases/default/bin`)
 /// 2. `<fnm-root>/current/bin`
 /// 3. every `<fnm-root>/node-versions/<v>/installation/bin`, newest first.
+///
 /// Both the modern XDG layout (`~/.local/share/fnm`) and the legacy layout
 /// (`~/.fnm`) are scanned.
 fn fnm_bin_dirs(home: &Path) -> Vec<PathBuf> {
     let mut dirs: Vec<PathBuf> = Vec::new();
-    for root in [home.join(".fnm"), home.join(".local").join("share").join("fnm")] {
+    for root in [
+        home.join(".fnm"),
+        home.join(".local").join("share").join("fnm"),
+    ] {
         let alias = root.join("aliases").join("default").join("bin");
         if alias.is_dir() && !dirs.contains(&alias) {
             dirs.push(alias);
@@ -134,7 +139,9 @@ fn fnm_bin_dirs(home: &Path) -> Vec<PathBuf> {
 /// pnpm, bun, Homebrew) may live — used as a probe fallback when PATH alone
 /// would miss them.
 fn tool_fallback_bins() -> Vec<PathBuf> {
-    let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_default();
     let mut dirs = fnm_bin_dirs(&home);
     for d in [
         home.join("Library").join("pnpm"),
@@ -155,7 +162,9 @@ fn tool_fallback_bins() -> Vec<PathBuf> {
 /// user bin directories — are on PATH even when launched from Finder without
 /// an interactive shell, so node/pnpm/git resolve for spawned children.
 pub fn ensure_macos_paths() {
-    let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_default();
     let mut parts: Vec<PathBuf> =
         std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()).collect();
 

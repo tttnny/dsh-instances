@@ -129,11 +129,7 @@ fn build_menu(app: &AppHandle, running: &[RunningItem]) -> tauri::Result<Menu<ta
 }
 
 fn show_launcher(app: &AppHandle) {
-    if let Some(win) = app.get_webview_window("main") {
-        let _ = win.show();
-        let _ = win.unminimize();
-        let _ = win.set_focus();
-    }
+    crate::windows::show_or_create_main(app);
 }
 
 fn quit(app: &AppHandle) {

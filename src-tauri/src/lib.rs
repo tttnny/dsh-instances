@@ -18,7 +18,7 @@ mod windows;
 
 use std::collections::HashMap;
 use std::sync::Mutex as StdMutex;
-use tauri::{Emitter, Manager, WindowEvent};
+use tauri::{Emitter, Manager};
 
 pub struct AppState {
     pub config_path: std::path::PathBuf,
@@ -66,11 +66,7 @@ pub fn run() {
                 .map(|u| u.starts_with("dsh-launcher://launch"))
                 .unwrap_or(false);
             if !is_launch {
-                if let Some(win) = app.get_webview_window("main") {
-                    let _ = win.show();
-                    let _ = win.unminimize();
-                    let _ = win.set_focus();
-                }
+                windows::show_or_create_main(app);
             }
             if let Some(url) = link {
                 crate::log_info!("单实例转发 deep link: {url}");
@@ -149,25 +145,10 @@ pub fn run() {
             // System tray with dynamic menu.
             tray::build_tray(app.handle())?;
 
-            // Close-to-tray for the main window.
+            // Close-to-tray for the main window (destroyed-window recreation
+            // is handled by show_or_create_main / the RunEvent loop below).
             if let Some(win) = app.get_webview_window("main") {
-                let handle = app.handle().clone();
-                let win2 = win.clone();
-                win.on_window_event(move |event| {
-                    if let WindowEvent::CloseRequested { api, .. } = event {
-                        let minimize = handle
-                            .state::<AppState>()
-                            .config
-                            .lock()
-                            .unwrap()
-                            .settings
-                            .minimize_to_tray;
-                        if minimize {
-                            api.prevent_close();
-                            let _ = win2.hide();
-                        }
-                    }
-                });
+                windows::attach_close_behavior(app.handle(), &win);
             }
 
             Ok(())
@@ -246,14 +227,21 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app_handle, event| match event {
-            // macOS: clicking the Dock icon must bring a hidden (closed-to-
-            // tray) main window back and focus it.
+            // macOS: clicking the Dock icon must bring the main window back —
+            // both when it was hidden (close-to-tray) and when it was really
+            // destroyed (minimize_to_tray off); the latter rebuilds it.
             tauri::RunEvent::Reopen { .. } => {
-                if let Some(win) = app_handle.get_webview_window("main") {
-                    let _ = win.show();
-                    let _ = win.unminimize();
-                    let _ = win.set_focus();
-                }
+                windows::show_or_create_main(app_handle);
+            }
+            // The main window (or the last instance window) was closed with
+            // `minimize_to_tray` off: keep the app alive so running DSH
+            // instances are not torn down and the window can be recreated
+            // from the Dock/tray. Explicit exits (tray quit, app.exit())
+            // carry `code: Some(_)` and are not prevented.
+            tauri::RunEvent::ExitRequested {
+                code: None, api, ..
+            } => {
+                api.prevent_exit();
             }
             // Terminate child processes when the launcher exits so no DSH
             // instance is left orphaned.

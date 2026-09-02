@@ -298,9 +298,18 @@ pub fn ensure_user_dsh_home(cfg: &mut Config) {
     });
 }
 
-/// Path equality.
+/// Path equality. APFS volumes are case-insensitive by default, so the
+/// comparison folds case on macOS (matching how the filesystem itself
+/// resolves paths); elsewhere plain equality is used.
 pub fn paths_equal(a: &Path, b: &Path) -> bool {
-    a == b
+    #[cfg(target_os = "macos")]
+    {
+        a.to_string_lossy().to_lowercase() == b.to_string_lossy().to_lowercase()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        a == b
+    }
 }
 
 /// Merge HOME records that point at the same path, keeping the first and
