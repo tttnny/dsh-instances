@@ -4,37 +4,21 @@ import { useI18n } from 'vue-i18n'
 import { Message } from '@arco-design/web-vue'
 import { api } from '@/api'
 import { useLauncherStore } from '@/stores/launcher'
-import type { TaskInfo, TaskState } from '@/api/types'
+import type { TaskInfo } from '@/api/types'
 
 const { t } = useI18n()
 const store = useLauncherStore()
 
 const expanded = ref<Record<string, boolean>>({})
-// a-scrollbar component instances expose scrollTo()/scrollTop().
+
 interface ScrollbarExposed {
   scrollTo: (options: { top: number }) => void
 }
 const logRefs = ref<Record<string, ScrollbarExposed | null>>({})
 
 onMounted(() => {
-  // Refresh once on entry so tasks created before navigation are present.
   store.refreshTasks()
 })
-
-function stateColor(state: TaskState): string {
-  switch (state) {
-    case 'queued':
-      return 'blue'
-    case 'running':
-      return 'orange'
-    case 'done':
-      return 'green'
-    case 'error':
-      return 'red'
-    case 'cancelled':
-      return 'gray'
-  }
-}
 
 function setLogRef(id: string, el: unknown) {
   logRefs.value[id] = (el as ScrollbarExposed | null) ?? null
@@ -42,7 +26,6 @@ function setLogRef(id: string, el: unknown) {
 
 async function scrollToBottom(id: string) {
   await nextTick()
-  // The browser clamps the offset to the real scroll height.
   logRefs.value[id]?.scrollTo({ top: Number.MAX_SAFE_INTEGER })
 }
 
@@ -50,7 +33,6 @@ watch(
   () => store.tasks,
   () => {
     for (const task of store.taskList) {
-      // Auto-expand newly arrived running tasks.
       if (task.state === 'running' && expanded.value[task.id] === undefined) {
         expanded.value[task.id] = true
       }
@@ -95,12 +77,23 @@ const sortedTasks = computed(() => store.taskList)
 </script>
 
 <template>
-  <div class="dl-page">
-    <div class="dl-card">
+  <div class="dl-page tasks-page">
+    <div class="dl-card tasks-card">
       <div class="dl-card-title">
-        <h3>{{ t('tasks.title') }}</h3>
+        <div class="title-with-count">
+          <h3>{{ t('tasks.title') }}</h3>
+          <span v-if="store.runningTaskCount > 0" class="running-count-pill tnum">
+            {{ store.runningTaskCount }}
+          </span>
+        </div>
         <div class="dl-toolbar">
-          <a-button size="small" @click="store.refreshTasks()">{{ t('common.refresh') }}</a-button>
+          <button class="mac-secondary-btn" @click="store.refreshTasks()">
+            <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8">
+              <path d="M13.5 8A5.5 5.5 0 1 1 12 4.1L14 2" />
+              <polyline points="14 5.5 14 2 10.5 2" />
+            </svg>
+            <span>{{ t('common.refresh') }}</span>
+          </button>
         </div>
       </div>
 
@@ -108,14 +101,16 @@ const sortedTasks = computed(() => store.taskList)
         <a-empty :description="t('tasks.empty')" />
       </div>
 
-      <div v-for="task in sortedTasks" :key="task.id" class="task-card">
+      <div v-for="task in sortedTasks" :key="task.id" class="task-box">
         <div class="task-head" @click="toggleExpand(task.id)">
           <div class="task-info">
             <div class="task-label">
-              {{ task.label }}
-              <a-tag :color="stateColor(task.state)" size="small">{{ t(`tasks.state.${task.state}`) }}</a-tag>
+              <span class="label-text">{{ task.label }}</span>
+              <span :class="['apple-status-dot', task.state === 'running' ? 'starting' : task.state === 'done' ? 'running' : task.state === 'error' ? 'error' : 'idle']">
+                {{ t(`tasks.state.${task.state}`) }}
+              </span>
             </div>
-            <div class="task-meta">
+            <div class="task-meta tnum">
               {{ formatTime(task.created_at) }}
               <template v-if="task.state === 'queued'"> · {{ t('tasks.queuedHint') }}</template>
               <template v-if="task.state === 'done' && instanceName(task)">
@@ -124,6 +119,7 @@ const sortedTasks = computed(() => store.taskList)
               <template v-if="task.state === 'error' && task.message"> · {{ task.message }}</template>
             </div>
           </div>
+
           <div class="task-progress">
             <a-progress
               v-if="task.state === 'running'"
@@ -144,48 +140,133 @@ const sortedTasks = computed(() => store.taskList)
               :status="task.state === 'error' ? 'danger' : 'normal'"
             />
           </div>
+
           <div v-if="task.state === 'running' && task.percent >= 90" class="installing-hint">
             {{ t('tasks.installingHint') }}
           </div>
+
           <div class="task-actions" @click.stop>
-            <a-button
+            <button
               v-if="task.state === 'running' || task.state === 'queued'"
-              size="mini"
-              status="warning"
+              class="mac-action-pill warning"
               @click="onCancel(task.id)"
             >
               {{ t('tasks.cancel') }}
-            </a-button>
-            <a-button v-else size="mini" status="danger" @click="onRemove(task.id)">
+            </button>
+            <button
+              v-else
+              class="mac-action-pill danger"
+              @click="onRemove(task.id)"
+            >
               {{ t('tasks.remove') }}
-            </a-button>
+            </button>
           </div>
-          <span class="expand-icon">{{ expanded[task.id] ? '▾' : '▸' }}</span>
+
+          <span class="expand-icon" :class="{ open: expanded[task.id] }">
+            <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M6 12l4-4-4-4" />
+            </svg>
+          </span>
         </div>
 
-        <a-scrollbar
-          v-if="expanded[task.id]"
-          :ref="(el: unknown) => setLogRef(task.id, el)"
-          class="task-log"
-          style="max-height: 280px; overflow-y: auto"
-        >
-          <pre><code>{{ task.logs.join('\n') || t('tasks.noLogs') }}</code></pre>
-        </a-scrollbar>
+        <div v-if="expanded[task.id]" class="task-log-wrap">
+          <a-scrollbar
+            :ref="(el: unknown) => setLogRef(task.id, el)"
+            class="task-log-scroller"
+            style="max-height: 280px; overflow-y: auto"
+          >
+            <pre><code>{{ task.logs.join('\n') || t('tasks.noLogs') }}</code></pre>
+          </a-scrollbar>
+        </div>
       </div>
     </div>
   </div>
 </template>
 
 <style lang="scss" scoped>
-.empty-tasks {
-  padding: 40px 0;
+.title-with-count {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+
+  .running-count-pill {
+    padding: 1px 7px;
+    font-size: 11px;
+    font-weight: 600;
+    border-radius: 10px;
+    background: rgb(var(--primary-6) / 18%);
+    color: rgb(var(--primary-6));
+  }
 }
 
-.task-card {
-  border: 1px solid var(--color-border-2);
-  border-radius: 8px;
+.mac-secondary-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 10px;
+  font-size: 12.5px;
+  font-weight: 500;
+  border-radius: 7px;
+  border: 1px solid var(--apple-card-border);
+  background: var(--apple-card-bg);
+  color: var(--color-text-2);
+  cursor: pointer;
+  transition: all 0.16s ease;
+
+  &:hover {
+    background: var(--apple-group-bg);
+    color: var(--color-text-1);
+  }
+
+  &:active {
+    transform: scale(var(--apple-active-scale));
+  }
+}
+
+.mac-action-pill {
+  border: 1px solid var(--apple-card-border);
+  background: var(--apple-card-bg);
+  color: var(--color-text-2);
+  border-radius: 6px;
+  padding: 3px 9px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+
+  &.warning {
+    color: rgb(var(--orange-6));
+
+    &:hover {
+      background: rgb(var(--orange-6) / 12%);
+    }
+  }
+
+  &.danger {
+    color: rgb(var(--red-6));
+
+    &:hover {
+      background: rgb(var(--red-6) / 12%);
+    }
+  }
+
+  &:active {
+    transform: scale(var(--apple-active-scale));
+  }
+}
+
+.empty-tasks {
+  padding: 48px 0;
+}
+
+.task-box {
+  border: 1px solid var(--apple-card-border);
+  border-radius: 10px;
   margin-bottom: 12px;
   overflow: hidden;
+  background: var(--apple-card-bg);
+  transition: border-color 0.16s ease;
 }
 
 .task-head {
@@ -195,9 +276,10 @@ const sortedTasks = computed(() => store.taskList)
   padding: 12px 16px;
   cursor: pointer;
   user-select: none;
+  transition: background 0.15s ease;
 
   &:hover {
-    background: var(--color-fill-1);
+    background: var(--apple-group-bg);
   }
 }
 
@@ -207,29 +289,36 @@ const sortedTasks = computed(() => store.taskList)
 }
 
 .task-label {
-  font-weight: 600;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
+
+  .label-text {
+    font-size: 13.5px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    color: var(--color-text-1);
+  }
 }
 
 .task-meta {
   font-size: 12px;
   color: var(--color-text-3);
-  margin-top: 4px;
+  margin-top: 3px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .task-progress {
-  width: 180px;
+  width: 170px;
   flex-shrink: 0;
 }
 
 .installing-hint {
   flex-shrink: 0;
   font-size: 12px;
+  font-weight: 500;
   color: rgb(var(--orange-6));
   white-space: nowrap;
 }
@@ -240,20 +329,28 @@ const sortedTasks = computed(() => store.taskList)
 
 .expand-icon {
   color: var(--color-text-3);
-  width: 16px;
+  display: flex;
+  align-items: center;
+  transition: transform var(--apple-duration) var(--apple-spring-curve);
+
+  &.open {
+    transform: rotate(90deg);
+  }
 }
 
-.task-log {
-  background: #1d2129;
-  border-top: 1px solid var(--color-border-2);
+.task-log-wrap {
+  border-top: 1px solid var(--apple-separator);
+  background: #191b22;
+}
 
+.task-log-scroller {
   pre {
     margin: 0;
-    padding: 12px 16px;
+    padding: 14px 16px;
+    font-family: 'SF Mono', Menlo, Monaco, Consolas, monospace;
     font-size: 12px;
     line-height: 1.6;
-    color: #a9b7c6;
-    font-family: Consolas, 'Courier New', monospace;
+    color: #c9d1d9;
     white-space: pre-wrap;
     word-break: break-all;
   }

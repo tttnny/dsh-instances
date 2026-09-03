@@ -15,20 +15,20 @@ const store = useLauncherStore()
 const newVisible = ref(false)
 
 const columns = computed(() => [
-  { title: t('instances.table.name'), slotName: 'name', width: 170 },
-  { title: t('instances.table.version'), slotName: 'version', width: 120 },
-  { title: t('instances.table.home'), slotName: 'home', width: 140 },
-  { title: t('instances.table.profile'), slotName: 'profile', width: 80 },
-  { title: t('instances.table.status'), slotName: 'status', width: 90 },
+  { title: t('instances.table.name'), slotName: 'name', width: 190 },
+  { title: t('instances.table.version'), slotName: 'version', width: 130 },
+  { title: t('instances.table.home'), slotName: 'home', width: 150 },
+  { title: t('instances.table.profile'), slotName: 'profile', width: 90 },
+  { title: t('instances.table.status'), slotName: 'status', width: 130 },
   {
     title: t('instances.table.actions'),
     slotName: 'actions',
-    width: 190,
-    align: 'center' as const,
+    width: 170,
+    align: 'right' as const,
   },
 ])
 
-// --- Instance icons (issue #8): resolved lazily per instance -------------------
+// --- Instance icons -----------------------------------------------------------
 
 const iconMap = ref<Record<string, string | null>>({})
 
@@ -54,19 +54,6 @@ watch(
   { immediate: true },
 )
 
-function stateColor(state: InstanceState): string {
-  switch (state) {
-    case 'running':
-      return 'green'
-    case 'starting':
-      return 'orange'
-    case 'exited':
-      return 'red'
-    default:
-      return 'gray'
-  }
-}
-
 async function onDelete(id: string, name: string) {
   try {
     await api.deleteInstance(id)
@@ -77,7 +64,7 @@ async function onDelete(id: string, name: string) {
   }
 }
 
-// --- Copy instance ---------------------------------------------------------
+// --- Copy instance -----------------------------------------------------------
 
 const copySource = ref<DshInstance | null>(null)
 const copyName = ref('')
@@ -122,7 +109,6 @@ function copyUrl(url: string) {
   Message.success(t('common.copied'))
 }
 
-// Opens the running instance URL in the system browser (new tab in preview).
 async function onOpenBrowser(id: string) {
   try {
     await api.openInstanceWindow(id)
@@ -133,14 +119,21 @@ async function onOpenBrowser(id: string) {
 </script>
 
 <template>
-  <div class="dl-page">
-    <div class="dl-card">
+  <div class="dl-page instances-page">
+    <div class="dl-card instances-card">
       <div class="dl-card-title">
-        <h3>{{ t('instances.title') }}</h3>
+        <div class="title-with-count">
+          <h3>{{ t('instances.title') }}</h3>
+          <span class="count-badge tnum">{{ store.instances.length }}</span>
+        </div>
         <div class="dl-toolbar">
-          <a-button type="primary" @click="newVisible = true">
-            {{ t('instances.newInstance') }}
-          </a-button>
+          <button class="mac-primary-btn" @click="newVisible = true">
+            <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+              <line x1="8" y1="3" x2="8" y2="13" />
+              <line x1="3" y1="8" x2="13" y2="8" />
+            </svg>
+            <span>{{ t('instances.newInstance') }}</span>
+          </button>
         </div>
       </div>
 
@@ -150,94 +143,105 @@ async function onOpenBrowser(id: string) {
         :pagination="false"
         row-key="id"
         :scroll="{ x: 790 }"
+        class="apple-styled-table"
       >
         <template #name="{ record }">
-          <span class="inst-name">
-            <img v-if="iconMap[record.id]" :src="iconMap[record.id]!" class="inst-icon" alt="" />
-            <img v-else src="@/assets/launcher-icon.png" class="inst-icon" alt="" />
-            <span class="cell-ellipsis" :title="record.name">{{ record.name }}</span>
-          </span>
+          <div class="inst-name-cell">
+            <img v-if="iconMap[record.id]" :src="iconMap[record.id]!" class="inst-avatar" alt="" />
+            <img v-else src="@/assets/launcher-icon.png" class="inst-avatar" alt="" />
+            <span class="cell-title" :title="record.name">{{ record.name }}</span>
+          </div>
         </template>
+
         <template #version="{ record }">
           <span
-            class="cell-ellipsis"
+            class="cell-text tnum"
             :title="store.versionById(record.version_id)?.version ?? record.version_id"
           >
             {{ store.versionById(record.version_id)?.version ?? record.version_id }}
           </span>
         </template>
+
         <template #home="{ record }">
           <a-tooltip :content="store.homeById(record.home_id)?.path">
-            <span class="cell-ellipsis">{{
-              store.homeById(record.home_id)?.name ?? record.home_id
-            }}</span>
+            <span class="cell-text home-link">
+              {{ store.homeById(record.home_id)?.name ?? record.home_id }}
+            </span>
           </a-tooltip>
         </template>
+
         <template #profile="{ record }">
-          <span class="cell-ellipsis" :title="record.last_profile ?? record.default_profile ?? ''">
+          <span class="profile-chip" :title="record.last_profile ?? record.default_profile ?? ''">
             {{ record.last_profile ?? record.default_profile ?? '—' }}
           </span>
         </template>
+
         <template #status="{ record }">
           <div class="status-cell">
-            <a-tag :color="stateColor(store.statusOf(record.id).state)">
+            <span :class="['apple-status-dot', store.statusOf(record.id).state]">
               {{ t(`home.status.${store.statusOf(record.id).state}`) }}
-            </a-tag>
-            <template v-if="store.statusOf(record.id).url">
-              <div class="status-url-row">
-                <a-link
-                  class="status-url"
-                  :title="store.statusOf(record.id).url!"
-                  @click="onOpenBrowser(record.id)"
-                >
-                  {{ store.statusOf(record.id).url }}
-                </a-link>
-                <a-button size="mini" type="text" @click="copyUrl(store.statusOf(record.id).url!)">
-                  {{ t('common.copy') }}
-                </a-button>
-              </div>
-            </template>
+            </span>
+            <div v-if="store.statusOf(record.id).url" class="status-url-pill">
+              <span class="url-click tnum" @click="onOpenBrowser(record.id)">
+                {{ store.statusOf(record.id).url }}
+              </span>
+              <button class="mini-copy" :title="t('common.copy')" @click="copyUrl(store.statusOf(record.id).url!)">
+                <svg viewBox="0 0 16 16" width="10" height="10" fill="none" stroke="currentColor" stroke-width="1.6">
+                  <rect x="5" y="5" width="8" height="8" rx="1.5" />
+                  <path d="M3 11V3a1 1 0 0 1 1-1h8" />
+                </svg>
+              </button>
+            </div>
           </div>
         </template>
+
         <template #actions="{ record }">
-          <a-space class="inst-actions" :size="4">
-            <a-button
-              size="mini"
+          <div class="table-actions">
+            <button
+              class="mac-action-pill"
+              :title="t('instances.table.edit')"
               @click="router.push({ name: 'instance-edit', params: { id: record.id } })"
             >
               {{ t('instances.table.edit') }}
-            </a-button>
-            <a-button size="mini" @click="openCopy(record)">
+            </button>
+            <button
+              class="mac-action-pill"
+              :title="t('instances.table.copy')"
+              @click="openCopy(record)"
+            >
               {{ t('instances.table.copy') }}
-            </a-button>
+            </button>
             <a-popconfirm
               :content="t('instances.confirmDelete', { name: record.name })"
               @ok="onDelete(record.id, record.name)"
             >
-              <a-button size="mini" status="danger">{{ t('instances.table.delete') }}</a-button>
+              <button class="mac-action-pill danger" :title="t('instances.table.delete')">
+                {{ t('instances.table.delete') }}
+              </button>
             </a-popconfirm>
-          </a-space>
+          </div>
         </template>
+
         <template #empty>
-          <a-empty :description="t('instances.emptyDesc')">
-            <template #image>
-              <div class="empty-title">{{ t('instances.emptyTitle') }}</div>
-            </template>
-            <a-button type="primary" @click="newVisible = true">
+          <div class="table-empty-block">
+            <div class="empty-title">{{ t('instances.emptyTitle') }}</div>
+            <div class="empty-desc">{{ t('instances.emptyDesc') }}</div>
+            <button class="mac-primary-btn" style="margin-top: 12px" @click="newVisible = true">
               {{ t('instances.newInstance') }}
-            </a-button>
-          </a-empty>
+            </button>
+          </div>
         </template>
       </a-table>
     </div>
 
-    <!-- Copy instance dialog: name it first, then duplicate on save -->
+    <!-- Copy Instance Dialog -->
     <a-modal
       :visible="!!copySource"
       :title="t('instances.copyTitle')"
       :ok-text="t('instanceEdit.save')"
       :cancel-text="t('instanceEdit.cancel')"
       :ok-button-props="{ disabled: !copyValid, loading: copying }"
+      modal-class="apple-modal"
       @ok="confirmCopy"
       @cancel="closeCopy"
     >
@@ -246,12 +250,24 @@ async function onOpenBrowser(id: string) {
           <a-input v-model="copyName" :placeholder="t('instances.copyNamePlaceholder')" />
         </a-form-item>
         <a-form-item :label="t('instances.copyHomeLabel')">
-          <a-radio-group v-model="copyNewHome" type="button">
-            <a-radio :value="false">{{ t('instances.copyHomeReuse') }}</a-radio>
-            <a-radio :value="true">{{ t('instances.copyHomeNew') }}</a-radio>
-          </a-radio-group>
+          <div class="apple-segmented">
+            <button
+              type="button"
+              :class="{ active: !copyNewHome }"
+              @click="copyNewHome = false"
+            >
+              {{ t('instances.copyHomeReuse') }}
+            </button>
+            <button
+              type="button"
+              :class="{ active: copyNewHome }"
+              @click="copyNewHome = true"
+            >
+              {{ t('instances.copyHomeNew') }}
+            </button>
+          </div>
         </a-form-item>
-        <p class="copy-hint">{{ t('instances.copyHint') }}</p>
+        <p class="copy-hint-text">{{ t('instances.copyHint') }}</p>
       </a-form>
     </a-modal>
 
@@ -260,32 +276,91 @@ async function onOpenBrowser(id: string) {
 </template>
 
 <style lang="scss" scoped>
-.inst-name {
-  display: inline-flex;
+.title-with-count {
+  display: flex;
   align-items: center;
   gap: 8px;
+
+  .count-badge {
+    padding: 1px 7px;
+    font-size: 11.5px;
+    font-weight: 600;
+    border-radius: 10px;
+    background: var(--apple-group-bg);
+    color: var(--color-text-3);
+  }
+}
+
+.mac-primary-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 14px;
+  font-size: 13px;
+  font-weight: 500;
+  border-radius: 8px;
+  border: none;
+  background: rgb(var(--primary-6));
+  color: #fff;
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgb(var(--primary-6) / 30%);
+  transition: all 0.16s ease;
+
+  &:hover {
+    filter: brightness(1.06);
+    box-shadow: 0 2px 8px rgb(var(--primary-6) / 45%);
+  }
+
+  &:active {
+    transform: scale(var(--apple-active-scale));
+  }
+}
+
+// Table cell layouts
+.inst-name-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
   min-width: 0;
   max-width: 100%;
+
+  .inst-avatar {
+    width: 26px;
+    height: 26px;
+    border-radius: 7px;
+    object-fit: cover;
+    flex-shrink: 0;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  }
+
+  .cell-title {
+    font-weight: 600;
+    color: var(--color-text-1);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 }
 
-.cell-ellipsis {
-  display: block;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.cell-text {
+  font-size: 13px;
+  color: var(--color-text-2);
+
+  &.home-link {
+    color: var(--color-text-3);
+    &:hover {
+      color: var(--color-text-1);
+    }
+  }
 }
 
-.inst-name .cell-ellipsis {
-  flex: 1 1 auto;
-}
-
-.inst-icon {
-  width: 24px;
-  height: 24px;
+.profile-chip {
+  padding: 2px 8px;
+  font-size: 11.5px;
   border-radius: 6px;
-  object-fit: cover;
-  flex-shrink: 0;
+  background: var(--apple-group-bg);
+  color: var(--color-text-2);
 }
 
 .status-cell {
@@ -293,41 +368,99 @@ async function onOpenBrowser(id: string) {
   flex-direction: column;
   align-items: flex-start;
   gap: 4px;
-  min-width: 0;
+
+  .status-url-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    background: var(--apple-group-bg);
+    padding: 1px 6px;
+    border-radius: 6px;
+    max-width: 140px;
+
+    .url-click {
+      font-size: 11px;
+      color: rgb(var(--primary-6));
+      cursor: pointer;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+
+      &:hover {
+        text-decoration: underline;
+      }
+    }
+
+    .mini-copy {
+      border: none;
+      background: transparent;
+      padding: 1px;
+      color: var(--color-text-3);
+      cursor: pointer;
+
+      &:hover {
+        color: var(--color-text-1);
+      }
+    }
+  }
 }
 
-.status-url-row {
-  display: flex;
+.table-actions {
+  display: inline-flex;
   align-items: center;
-  gap: 4px;
-  min-width: 0;
-  max-width: 100%;
+  gap: 6px;
 }
 
-.status-url {
+.mac-action-pill {
+  border: 1px solid var(--apple-card-border);
+  background: var(--apple-card-bg);
+  color: var(--color-text-2);
+  border-radius: 6px;
+  padding: 3px 9px;
   font-size: 12px;
-  display: block;
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+
+  &:hover {
+    background: var(--apple-group-bg);
+    color: var(--color-text-1);
+  }
+
+  &.danger {
+    color: rgb(var(--red-6));
+
+    &:hover {
+      background: rgb(var(--red-6) / 12%);
+    }
+  }
+
+  &:active {
+    transform: scale(var(--apple-active-scale));
+  }
 }
 
-.inst-actions {
-  flex-wrap: nowrap;
-  white-space: nowrap;
+.table-empty-block {
+  padding: 36px 16px;
+  text-align: center;
+
+  .empty-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--color-text-1);
+  }
+
+  .empty-desc {
+    font-size: 12.5px;
+    color: var(--color-text-3);
+    margin-top: 4px;
+  }
 }
 
-.empty-title {
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--color-text-1);
-}
-
-.copy-hint {
-  margin: 0;
+.copy-hint-text {
+  margin: 8px 0 0;
   font-size: 12px;
   color: var(--color-text-3);
+  line-height: 1.5;
 }
 </style>

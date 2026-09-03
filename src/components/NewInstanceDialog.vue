@@ -126,6 +126,7 @@ async function onConfirm() {
     :ok-text="t('newInstance.create')"
     :cancel-text="t('common.cancel')"
     :ok-button-props="{ disabled: !canConfirm, loading: busy }"
+    modal-class="apple-sheet-modal"
     @ok="onConfirm"
     @cancel="close"
   >
@@ -146,15 +147,15 @@ async function onConfirm() {
             {{ v.version }}
           </a-option>
         </a-select>
-        <a-alert v-if="isSourceBuild" type="warning" class="dialog-hint">
+        <p v-if="isSourceBuild" class="modal-footnote warn">
           {{ t('newInstance.sourceBuildHint') }}
-        </a-alert>
-        <a-alert v-else-if="installedVersion" type="info" class="dialog-hint">
+        </p>
+        <p v-else-if="installedVersion" class="modal-footnote success">
           {{ t('newInstance.alreadyInstalled') }}
-        </a-alert>
-        <a-alert v-else-if="version" type="info" class="dialog-hint">
+        </p>
+        <p v-else-if="version" class="modal-footnote info">
           {{ t('newInstance.willInstall', { version }) }}
-        </a-alert>
+        </p>
       </a-form-item>
       <a-form-item :label="t('newInstance.home')" required>
         <a-select v-model="homeId">
@@ -163,9 +164,9 @@ async function onConfirm() {
             {{ h.name }}（{{ h.path }}）
           </a-option>
         </a-select>
-        <a-alert v-if="dedicated" type="info" class="dialog-hint">
+        <p v-if="dedicated" class="modal-footnote info">
           {{ t('newInstance.dedicatedHomeHint', { path: dedicatedPath }) }}
-        </a-alert>
+        </p>
       </a-form-item>
       <a-form-item v-if="!dedicated" :label="t('newInstance.defaultProfile')">
         <a-select
@@ -181,7 +182,21 @@ async function onConfirm() {
 </template>
 
 <style lang="scss" scoped>
-.dialog-hint {
-  margin-top: 8px;
+.modal-footnote {
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+
+  &.info {
+    color: var(--color-text-3);
+  }
+
+  &.warn {
+    color: rgb(var(--orange-6));
+  }
+
+  &.success {
+    color: rgb(var(--green-6));
+  }
 }
 </style>

@@ -13,7 +13,7 @@ const router = useRouter()
 const { t } = useI18n()
 const store = useLauncherStore()
 
-// --- Instance icons (issue #8): each card avatar follows its instance --------
+// --- Instance icons -----------------------------------------------------------
 
 const iconMap = ref<Record<string, string | null>>({})
 
@@ -44,8 +44,6 @@ onMounted(() => {
 })
 
 // --- Per-card profile state ---------------------------------------------------
-// Each card owns its Profile dropdown; selection prefers last-used, then the
-// instance default, then the first available — same order as before.
 
 const profilesById = ref<Record<string, string[]>>({})
 const profileSel = ref<Record<string, string | undefined>>({})
@@ -131,13 +129,7 @@ function canStart(inst: DshInstance): boolean {
   )
 }
 
-function subtitleOf(inst: DshInstance): string {
-  const v = versionOf(inst)
-  const p = profileSel.value[inst.id] ?? '—'
-  return `${v} · ${p}`
-}
-
-// --- Start / stop / open ---------------------------------------------------
+// --- Start / stop / open -----------------------------------------------------
 
 async function reportHealth(instanceId: string, profile: string) {
   try {
@@ -148,7 +140,7 @@ async function reportHealth(instanceId: string, profile: string) {
       else Notification.warning({ title: t('home.health.warnTitle'), content, duration: 8000, closable: true })
     }
   } catch {
-    // A failed preflight must never affect the launch.
+    // Advisory only
   }
 }
 
@@ -159,9 +151,6 @@ async function onStart(inst: DshInstance) {
     await api.startInstance(inst.id, profile)
     touchLastUsed(inst.id)
     Message.success(t('home.started'))
-    // Dependency-tree preflight: advisory only, never blocks the launch. A
-    // duplicated core copy in the profile silently breaks every tool call at
-    // runtime, so surface it here instead of leaving users to dig through logs.
     void reportHealth(inst.id, profile)
   } catch (e) {
     Message.error(String(e))
@@ -178,7 +167,6 @@ async function onStop(inst: DshInstance) {
   }
 }
 
-// Restart with the card's selected profile (falling back to the running one).
 async function onRestart(inst: DshInstance) {
   if (restarting.value[inst.id]) return
   const profile = profileSel.value[inst.id] ?? statusOf(inst.id).profile ?? undefined
@@ -197,8 +185,6 @@ async function onRestart(inst: DshInstance) {
     try {
       await api.startInstance(inst.id, profile)
     } catch (e) {
-      // Stopped but not started: report the state first so the user knows
-      // a manual start is the way back, then the underlying reason.
       Message.warning(t('home.stopped'))
       Message.error(String(e))
       return
@@ -210,7 +196,6 @@ async function onRestart(inst: DshInstance) {
   }
 }
 
-// Opens the running instance URL in the system browser (new tab in preview).
 async function onOpenBrowser(inst: DshInstance) {
   try {
     await api.openInstanceWindow(inst.id)
@@ -225,7 +210,7 @@ function copyUrl(url: string) {
   Message.success(t('common.copied'))
 }
 
-// --- Card overflow: settings / open dir / view log ----------------------------
+// --- Card overflow actions ----------------------------------------------------
 
 function goSettings(inst: DshInstance) {
   void router.push({ name: 'instance-edit', params: { id: inst.id } }).catch(() => undefined)
@@ -285,167 +270,230 @@ function goManage() {
 
 <template>
   <div class="dl-page home-page">
-    <!-- Toolbar: search + entry points -->
+    <!-- Apple-grade Toolbar -->
     <div class="home-toolbar">
-      <a-input
-        v-model="query"
-        :placeholder="t('home.searchPlaceholder')"
-        allow-clear
-        class="home-search"
-      />
-      <span class="home-count">{{ t('home.instanceCount', { count: filteredInstances.length }) }}</span>
+      <div class="apple-search-wrapper">
+        <svg class="search-icon" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8">
+          <circle cx="7" cy="7" r="4.5" />
+          <line x1="10.5" y1="10.5" x2="14" y2="14" stroke-linecap="round" />
+        </svg>
+        <input
+          v-model="query"
+          type="text"
+          class="apple-search-input"
+          :placeholder="t('home.searchPlaceholder')"
+        />
+        <button v-if="query" class="search-clear-btn" @click="query = ''">×</button>
+      </div>
+
+      <span class="home-count tnum">{{ t('home.instanceCount', { count: filteredInstances.length }) }}</span>
       <span class="home-spacer" />
-      <a-button @click="goManage">{{ t('home.instanceList') }}</a-button>
-      <a-button type="primary" @click="goNew">{{ t('home.newInstance') }}</a-button>
+
+      <button class="mac-secondary-btn" @click="goManage">
+        <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
+          <line x1="2" y1="4" x2="14" y2="4" />
+          <line x1="2" y1="8" x2="14" y2="8" />
+          <line x1="2" y1="12" x2="14" y2="12" />
+        </svg>
+        <span>{{ t('home.instanceList') }}</span>
+      </button>
+
+      <button class="mac-primary-btn" @click="goNew">
+        <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <line x1="8" y1="3" x2="8" y2="13" />
+          <line x1="3" y1="8" x2="13" y2="8" />
+        </svg>
+        <span>{{ t('home.newInstance') }}</span>
+      </button>
     </div>
 
     <!-- Empty state -->
     <div v-if="store.instances.length === 0" class="dl-card home-empty">
-      <a-empty :description="t('instances.emptyDesc')">
-        <template #image>
-          <div class="empty-title">{{ t('instances.emptyTitle') }}</div>
-        </template>
-        <a-button type="primary" @click="goNew">{{ t('home.newInstance') }}</a-button>
-      </a-empty>
-    </div>
-    <div v-else-if="filteredInstances.length === 0" class="dl-card home-empty">
-      <a-empty :description="t('common.loading')" />
+      <div class="empty-icon-wrap">
+        <svg viewBox="0 0 48 48" width="44" height="44" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="6" y="8" width="36" height="32" rx="4" />
+          <line x1="6" y1="18" x2="42" y2="18" />
+          <circle cx="12" cy="13" r="1.5" fill="currentColor" />
+          <circle cx="17" cy="13" r="1.5" fill="currentColor" />
+          <circle cx="22" cy="13" r="1.5" fill="currentColor" />
+          <line x1="24" y1="26" x2="24" y2="34" />
+          <line x1="20" y1="30" x2="28" y2="30" />
+        </svg>
+      </div>
+      <div class="empty-title">{{ t('instances.emptyTitle') }}</div>
+      <div class="empty-desc">{{ t('instances.emptyDesc') }}</div>
+      <button class="mac-primary-btn" style="margin-top: 14px;" @click="goNew">
+        {{ t('home.newInstance') }}
+      </button>
     </div>
 
-    <!-- Instance card wall -->
+    <div v-else-if="filteredInstances.length === 0" class="dl-card home-empty">
+      <div class="empty-desc">{{ t('common.loading') }}</div>
+    </div>
+
+    <!-- Instance Card Wall -->
     <div v-else class="instance-grid">
-      <div v-for="inst in filteredInstances" :key="inst.id" class="dl-card instance-card">
+      <div
+        v-for="inst in filteredInstances"
+        :key="inst.id"
+        class="dl-card instance-card"
+      >
+        <!-- Card Header -->
         <div class="card-head">
           <div class="instance-avatar">
             <img :src="iconMap[inst.id] ?? launcherDefaultIcon" alt="" />
           </div>
           <div class="card-title-block">
             <div class="card-name" :title="inst.name">{{ inst.name }}</div>
-            <div class="card-meta">{{ versionOf(inst) }} · {{ homeNameOf(inst) }}</div>
+            <div class="card-meta tnum">{{ versionOf(inst) }} · {{ homeNameOf(inst) }}</div>
           </div>
-          <a-tag
-            :color="statusOf(inst.id).state === 'running' ? 'green' : statusOf(inst.id).state === 'starting' ? 'orange' : 'gray'"
-            size="small"
-          >
-            {{ t(`home.status.${statusOf(inst.id).state}`) }}
-          </a-tag>
+          <!-- Apple Status Indicator -->
+          <div class="status-indicator-wrap">
+            <span :class="['apple-status-dot', statusOf(inst.id).state]">
+              {{ t(`home.status.${statusOf(inst.id).state}`) }}
+            </span>
+          </div>
         </div>
 
-        <div v-if="sharedHome(inst)" class="card-shared">
+        <!-- Shared Home Indicator -->
+        <div v-if="sharedHome(inst)" class="card-shared-badge">
           <a-tooltip :content="t('home.sharedHomeWarning')">
-            <a-tag color="orangered" size="small">{{ t('home.sharedHome') }}</a-tag>
+            <span class="shared-chip">
+              <svg viewBox="0 0 12 12" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.6">
+                <circle cx="6" cy="6" r="4.5" />
+                <line x1="6" y1="3.5" x2="6" y2="6.5" />
+                <circle cx="6" cy="8.5" r="0.5" fill="currentColor" />
+              </svg>
+              {{ t('home.sharedHome') }}
+            </span>
           </a-tooltip>
         </div>
 
+        <!-- Profile Selection Row -->
         <div class="card-profile-row">
           <span class="field-label">{{ t('home.profile') }}</span>
-          <a-select
-            v-model="profileSel[inst.id]"
-            :placeholder="t('home.selectProfile')"
-            :loading="profilesLoading[inst.id]"
-            size="small"
-            class="card-profile-select"
-            allow-clear
-            @change="touchLastUsed(inst.id)"
-          >
-            <a-option v-for="p in profilesById[inst.id] ?? []" :key="p" :value="p">{{ p }}</a-option>
-          </a-select>
-          <a-button
-            size="mini"
-            type="text"
-            :loading="profilesLoading[inst.id]"
-            @click="loadProfilesFor(inst)"
-          >
-            ⟳
-          </a-button>
+          <div class="profile-select-capsule">
+            <a-select
+              v-model="profileSel[inst.id]"
+              :placeholder="t('home.selectProfile')"
+              :loading="profilesLoading[inst.id]"
+              size="small"
+              class="card-profile-select"
+              allow-clear
+              @change="touchLastUsed(inst.id)"
+            >
+              <a-option v-for="p in profilesById[inst.id] ?? []" :key="p" :value="p">{{ p }}</a-option>
+            </a-select>
+            <button
+              class="profile-refresh-btn"
+              :title="t('common.refresh')"
+              :disabled="profilesLoading[inst.id]"
+              @click="loadProfilesFor(inst)"
+            >
+              <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+                <path d="M13.5 8A5.5 5.5 0 1 1 12 4.1L14 2" />
+                <polyline points="14 5.5 14 2 10.5 2" />
+              </svg>
+            </button>
+          </div>
         </div>
 
-        <div v-if="statusOf(inst.id).state === 'running' && statusOf(inst.id).url" class="card-url">
-          <a-link class="url-link" :title="statusOf(inst.id).url!" @click="onOpenBrowser(inst)">
-            {{ statusOf(inst.id).url }}
-          </a-link>
-          <a-button size="mini" type="text" class="url-copy" @click="copyUrl(statusOf(inst.id).url!)">
-            {{ t('common.copy') }}
-          </a-button>
+        <!-- Running URL Banner -->
+        <div v-if="statusOf(inst.id).state === 'running' && statusOf(inst.id).url" class="card-url-banner">
+          <button class="url-chip" @click="onOpenBrowser(inst)">
+            <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
+              <path d="M7 9l5-5m0 0H8m4 0v4" />
+              <rect x="3" y="6" width="7" height="7" rx="1.5" />
+            </svg>
+            <span class="url-text tnum">{{ statusOf(inst.id).url }}</span>
+          </button>
+          <button class="url-copy-btn" :title="t('common.copy')" @click="copyUrl(statusOf(inst.id).url!)">
+            <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
+              <rect x="5" y="5" width="8" height="8" rx="1.5" />
+              <path d="M3 11V3a1 1 0 0 1 1-1h8" />
+            </svg>
+          </button>
         </div>
 
-        <div class="card-actions">
-          <template v-if="statusOf(inst.id).state !== 'running' && !restarting[inst.id]">
-            <a-button
-              type="primary"
-              long
+        <!-- Primary Action Buttons -->
+        <div class="card-main-actions">
+          <template v-if="statusOf(inst.id).state === 'running'">
+            <button class="action-btn primary-action active-open" @click="onOpenBrowser(inst)">
+              <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                <polygon points="5 3 13 8 5 13 5 3" />
+              </svg>
+              <span>{{ t('home.openBrowser') }}</span>
+            </button>
+            <button class="action-btn secondary-action" @click="onRestart(inst)">
+              <span>{{ t('home.restart') }}</span>
+            </button>
+            <button class="action-btn danger-action" @click="onStop(inst)">
+              <span>{{ t('home.stop') }}</span>
+            </button>
+          </template>
+
+          <template v-else-if="statusOf(inst.id).state === 'starting'">
+            <button class="action-btn secondary-action is-busy" disabled>
+              <span class="mini-spinner" />
+              <span>{{ t('home.status.starting') }}</span>
+            </button>
+            <button class="action-btn danger-action" @click="onStop(inst)">
+              <span>{{ t('home.stop') }}</span>
+            </button>
+          </template>
+
+          <template v-else>
+            <button
+              class="action-btn primary-action"
               :disabled="!canStart(inst)"
-              :loading="statusOf(inst.id).state === 'starting'"
               @click="onStart(inst)"
             >
-              {{ statusOf(inst.id).state === 'starting' ? t('home.starting') : t('home.start') }}
-            </a-button>
-            <div v-if="subtitleOf(inst)" class="card-sub">{{ subtitleOf(inst) }}</div>
-          </template>
-          <template v-else-if="statusOf(inst.id).state === 'running'">
-            <a-button type="primary" long @click="onOpenBrowser(inst)">
-              {{ t('home.openWindow') }}
-            </a-button>
-            <div class="stop-row">
-              <a-button
-                status="danger"
-                class="stop-half"
-                :disabled="restarting[inst.id]"
-                @click="onStop(inst)"
-              >
-                {{ t('home.stop') }}
-              </a-button>
-              <a-button
-                class="stop-half"
-                :loading="restarting[inst.id]"
-                :disabled="restarting[inst.id]"
-                @click="onRestart(inst)"
-              >
-                {{ t('home.restart') }}
-              </a-button>
-            </div>
-          </template>
-          <template v-else>
-            <!-- Restart in flight: hold a disabled loading slot so progress
-                 stays visible instead of flipping back mid-flight. -->
-            <a-button type="primary" long disabled :loading="true">
-              {{ t('home.restart') }}
-            </a-button>
+              <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                <polygon points="5 3 13 8 5 13 5 3" />
+              </svg>
+              <span>{{ t('home.start') }}</span>
+            </button>
           </template>
         </div>
 
-        <div class="card-foot">
-          <a-button size="small" type="text" @click="goSettings(inst)">
-            {{ t('instances.table.edit') }}
-          </a-button>
-          <a-button
-            size="small"
-            type="text"
-            :loading="terminalBusy[inst.id]"
-            @click="onOpenTerminal(inst)"
-          >
-            {{ t('home.openTerminal') }}
-          </a-button>
-          <span class="foot-spacer" />
-          <a-button
-            size="small"
-            type="text"
-            :loading="dirBusy[inst.id]"
-            @click="onOpenDirectory(inst)"
-          >
-            {{ t('instanceEdit.openDirectory') }}
-          </a-button>
-          <a-button
-            size="small"
-            type="text"
-            :loading="logBusy[inst.id]"
-            @click="onViewLog(inst)"
-          >
-            {{ t('instanceEdit.viewLog') }}
-          </a-button>
+        <!-- Card Bottom Utility Bar -->
+        <div class="card-bottom-bar">
+          <button class="mac-micro-btn" :title="t('home.openTerminal')" :disabled="terminalBusy[inst.id]" @click="onOpenTerminal(inst)">
+            <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
+              <polyline points="4 5 7 8 4 11" />
+              <line x1="8" y1="12" x2="12" y2="12" />
+            </svg>
+            <span>{{ t('home.terminal') }}</span>
+          </button>
+
+          <button class="mac-micro-btn" :title="t('instanceEdit.openDir')" :disabled="dirBusy[inst.id]" @click="onOpenDirectory(inst)">
+            <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
+              <path d="M2 4a1.5 1.5 0 0 1 1.5-1.5h3l2 2H13a1.5 1.5 0 0 1 1.5 1.5v6a1.5 1.5 0 0 1-1.5 1.5H3.5A1.5 1.5 0 0 1 2 12V4z" />
+            </svg>
+            <span>{{ t('instanceEdit.openDir') }}</span>
+          </button>
+
+          <button class="mac-micro-btn" :title="t('instanceEdit.viewLog')" :disabled="logBusy[inst.id]" @click="onViewLog(inst)">
+            <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
+              <rect x="3" y="2" width="10" height="12" rx="1.5" />
+              <line x1="6" y1="6" x2="10" y2="6" />
+              <line x1="6" y1="9" x2="10" y2="9" />
+            </svg>
+            <span>{{ t('instanceEdit.viewLog') }}</span>
+          </button>
+
+          <span class="flex-spacer" />
+
+          <button class="mac-micro-btn icon-only" :title="t('home.cardSettings')" @click="goSettings(inst)">
+            <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
+              <circle cx="8" cy="8" r="2.5" />
+              <path d="M8 1.5v1.2M8 13.3v1.2M1.5 8h1.2M13.3 8h1.2M3.4 3.4l.8.8M11.8 11.8l.8.8M3.4 12.6l.8-.8M11.8 4.2l.8-.8" />
+            </svg>
+          </button>
         </div>
       </div>
     </div>
+
     <NewInstanceDialog v-model:visible="newVisible" />
   </div>
 </template>
@@ -454,52 +502,177 @@ function goManage() {
 .home-page {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 20px;
 }
 
+// macOS Toolbar
 .home-toolbar {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
 }
 
-.home-search {
-  width: 260px;
+.apple-search-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 250px;
+
+  .search-icon {
+    position: absolute;
+    left: 10px;
+    color: var(--color-text-3);
+    pointer-events: none;
+  }
+
+  .apple-search-input {
+    width: 100%;
+    height: 30px;
+    padding: 0 28px 0 30px;
+    font-size: 13px;
+    border-radius: 8px;
+    border: 1px solid var(--apple-card-border);
+    background: var(--apple-card-bg);
+    color: var(--color-text-1);
+    outline: none;
+    transition: all 0.16s ease;
+
+    &:focus {
+      border-color: rgb(var(--primary-6));
+      box-shadow: 0 0 0 2px rgb(var(--primary-6) / 20%);
+    }
+
+    &::placeholder {
+      color: var(--color-text-4);
+    }
+  }
+
+  .search-clear-btn {
+    position: absolute;
+    right: 8px;
+    border: none;
+    background: transparent;
+    color: var(--color-text-3);
+    cursor: pointer;
+    font-size: 14px;
+    padding: 2px 4px;
+    line-height: 1;
+
+    &:hover {
+      color: var(--color-text-1);
+    }
+  }
 }
 
 .home-count {
   font-size: 12px;
   color: var(--color-text-3);
-  white-space: nowrap;
+  font-weight: 500;
 }
 
 .home-spacer {
   flex: 1;
 }
 
+// Apple Buttons
+.mac-primary-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 14px;
+  font-size: 13px;
+  font-weight: 500;
+  border-radius: 8px;
+  border: none;
+  background: rgb(var(--primary-6));
+  color: #fff;
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgb(var(--primary-6) / 30%);
+  transition: all 0.16s ease;
+
+  &:hover {
+    filter: brightness(1.06);
+    box-shadow: 0 2px 8px rgb(var(--primary-6) / 45%);
+  }
+
+  &:active {
+    transform: scale(var(--apple-active-scale));
+  }
+}
+
+.mac-secondary-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 12px;
+  font-size: 13px;
+  font-weight: 500;
+  border-radius: 8px;
+  border: 1px solid var(--apple-card-border);
+  background: var(--apple-card-bg);
+  color: var(--color-text-2);
+  cursor: pointer;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  transition: all 0.16s ease;
+
+  &:hover {
+    background: var(--apple-group-bg);
+    color: var(--color-text-1);
+  }
+
+  &:active {
+    transform: scale(var(--apple-active-scale));
+  }
+}
+
+// Empty State
 .home-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 56px 24px;
   text-align: center;
-  padding: 48px 24px;
+}
+
+.empty-icon-wrap {
+  color: var(--color-text-4);
+  margin-bottom: 12px;
 }
 
 .empty-title {
   font-size: 15px;
   font-weight: 600;
   color: var(--color-text-1);
+  margin-bottom: 4px;
 }
 
+.empty-desc {
+  font-size: 13px;
+  color: var(--color-text-3);
+  max-width: 380px;
+}
+
+// Card Wall Grid
 .instance-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
-  gap: 16px;
-  padding-bottom: 24px;
+  gap: 18px;
 }
 
 .instance-card {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  margin-top: 0 !important;
+  padding: 18px;
+  border-radius: var(--dl-card-radius);
+
+  &:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--apple-card-hover-shadow);
+  }
 }
 
 .card-head {
@@ -510,16 +683,16 @@ function goManage() {
 }
 
 .instance-avatar {
-  width: 48px;
-  height: 48px;
-  border-radius: 12px;
+  width: 44px;
+  height: 44px;
+  border-radius: 11px;
   background: linear-gradient(135deg, #165dff, #722ed1);
+  box-shadow: 0 2px 8px rgb(0 0 0 / 12%);
   display: flex;
   align-items: center;
   justify-content: center;
   overflow: hidden;
   flex-shrink: 0;
-  user-select: none;
 
   img {
     width: 100%;
@@ -536,6 +709,8 @@ function goManage() {
 .card-name {
   font-size: 15px;
   font-weight: 600;
+  letter-spacing: -0.015em;
+  color: var(--color-text-1);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -544,84 +719,241 @@ function goManage() {
 .card-meta {
   font-size: 12px;
   color: var(--color-text-3);
+  margin-top: 2px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.card-shared {
-  margin-top: -6px;
+.status-indicator-wrap {
+  flex-shrink: 0;
 }
 
+.card-shared-badge {
+  .shared-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 1px 7px;
+    font-size: 11px;
+    border-radius: 6px;
+    background: rgb(var(--orange-6) / 12%);
+    color: rgb(var(--orange-6));
+    font-weight: 500;
+  }
+}
+
+// Profile Row
 .card-profile-row {
   display: flex;
   align-items: center;
   gap: 8px;
+  font-size: 12.5px;
+
+  .field-label {
+    color: var(--color-text-3);
+    font-weight: 500;
+    flex-shrink: 0;
+  }
+
+  .profile-select-capsule {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .card-profile-select {
+    flex: 1;
+  }
+
+  .profile-refresh-btn {
+    width: 24px;
+    height: 24px;
+    border-radius: 6px;
+    border: 1px solid var(--apple-card-border);
+    background: var(--apple-group-bg);
+    color: var(--color-text-3);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.15s ease;
+
+    &:hover:not(:disabled) {
+      color: var(--color-text-1);
+    }
+  }
 }
 
-.field-label {
-  font-size: 12px;
-  color: var(--color-text-3);
-  flex-shrink: 0;
-}
-
-.card-profile-select {
-  flex: 1;
-  min-width: 0;
-}
-
-.card-url {
+// URL Banner
+.card-url-banner {
   display: flex;
   align-items: center;
   gap: 6px;
+  background: var(--apple-group-bg);
+  border-radius: 8px;
+  padding: 4px 8px;
   font-size: 12px;
-  min-width: 0;
 
-  .url-link {
-    flex: 1 1 auto;
-    min-width: 0;
-    display: block;
+  .url-chip {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    border: none;
+    background: transparent;
+    color: rgb(var(--primary-6));
+    font-weight: 500;
+    cursor: pointer;
+    text-align: left;
     overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+
+    .url-text {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    &:hover {
+      text-decoration: underline;
+    }
   }
 
-  .url-copy {
-    flex-shrink: 0;
+  .url-copy-btn {
+    border: none;
+    background: transparent;
+    color: var(--color-text-3);
+    cursor: pointer;
+    padding: 3px;
+    border-radius: 4px;
+
+    &:hover {
+      color: var(--color-text-1);
+      background: rgba(0, 0, 0, 0.05);
+    }
   }
 }
 
-.card-actions {
+// Card Actions
+.card-main-actions {
   display: flex;
-  flex-direction: column;
+  align-items: center;
   gap: 8px;
-  margin-top: auto;
+  margin-top: 4px;
+
+  .action-btn {
+    flex: 1;
+    height: 32px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 500;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    border: none;
+    cursor: pointer;
+    transition: all 0.16s ease;
+
+    &.primary-action {
+      background: rgb(var(--primary-6));
+      color: #fff;
+      box-shadow: 0 1px 3px rgb(var(--primary-6) / 25%);
+
+      &:hover:not(:disabled) {
+        filter: brightness(1.08);
+      }
+
+      &.active-open {
+        background: rgb(var(--green-6));
+        box-shadow: 0 1px 3px rgb(var(--green-6) / 25%);
+      }
+
+      &:disabled {
+        opacity: 0.45;
+        cursor: not-allowed;
+      }
+    }
+
+    &.secondary-action {
+      background: var(--apple-group-bg);
+      color: var(--color-text-1);
+      border: 1px solid var(--apple-card-border);
+
+      &:hover:not(:disabled) {
+        background: rgba(0, 0, 0, 0.08);
+      }
+    }
+
+    &.danger-action {
+      flex: 0 0 68px;
+      background: rgb(var(--red-6) / 12%);
+      color: rgb(var(--red-6));
+
+      &:hover {
+        background: rgb(var(--red-6) / 20%);
+      }
+    }
+
+    &:active:not(:disabled) {
+      transform: scale(var(--apple-active-scale));
+    }
+  }
 }
 
-.card-sub {
-  font-size: 12px;
-  color: var(--color-text-3);
-  text-align: center;
+.mini-spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
 }
 
-.stop-row {
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+// Bottom Bar
+.card-bottom-bar {
   display: flex;
-  gap: 10px;
+  align-items: center;
+  gap: 6px;
+  padding-top: 8px;
+  border-top: 1px solid var(--apple-separator);
 
-  .stop-half {
+  .flex-spacer {
     flex: 1;
   }
 }
 
-.card-foot {
-  display: flex;
+.mac-micro-btn {
+  display: inline-flex;
   align-items: center;
   gap: 4px;
-  border-top: 1px solid var(--color-border-1);
-  padding-top: 8px;
-}
+  padding: 4px 8px;
+  font-size: 11.5px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--color-text-3);
+  cursor: pointer;
+  transition: all 0.15s ease;
 
-.foot-spacer {
-  flex: 1;
+  &:hover:not(:disabled) {
+    background: var(--apple-group-bg);
+    color: var(--color-text-1);
+    border-color: var(--apple-card-border);
+  }
+
+  &.icon-only {
+    padding: 5px;
+  }
+
+  &:active:not(:disabled) {
+    transform: scale(var(--apple-active-scale));
+  }
 }
 </style>

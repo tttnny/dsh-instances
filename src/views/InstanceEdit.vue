@@ -23,7 +23,7 @@ const defaultProfile = ref<string | undefined>(undefined)
 const profiles = ref<string[]>([])
 const saving = ref(false)
 
-// --- Web port ---------------------------------------------------------------
+// --- Web port -----------------------------------------------------------------
 
 const portInput = ref('')
 const portBusy = ref(false)
@@ -176,39 +176,6 @@ watch(name, async (v) => {
   }
 })
 
-// --- Open directory / view log -------------------------------------------------
-
-const dirBusy = ref(false)
-const logBusy = ref(false)
-
-async function onOpenDirectory() {
-  if (!editingId.value) return
-  dirBusy.value = true
-  try {
-    const path = await api.openInstanceDirectory(editingId.value)
-    Message.success(t('instanceEdit.dirOpened', { path }))
-  } catch (e) {
-    Message.error(String(e))
-  } finally {
-    dirBusy.value = false
-  }
-}
-
-async function onViewLog() {
-  if (!editingId.value) return
-  logBusy.value = true
-  try {
-    const path = await api.openInstanceLog(editingId.value)
-    Message.success(t('instanceEdit.logOpened', { path }))
-  } catch (e) {
-    Message.error(String(e))
-  } finally {
-    logBusy.value = false
-  }
-}
-
-// --- Save ----------------------------------------------------------------------
-
 const formValid = computed(
   () => name.value.trim().length > 0 && !!versionId.value && !!homeId.value && envValid.value,
 )
@@ -262,290 +229,431 @@ const homeLabel = computed(() => {
 </script>
 
 <template>
-  <div class="edit-page">
-    <section class="edit-content">
-      <a-scrollbar type="track" outer-style="height: 100%" style="height: 100%; overflow-y: auto">
-        <div class="edit-inner">
-          <div class="dl-card context-bar">
-            <img v-if="iconUrl" :src="iconUrl" class="context-icon" alt="" />
-            <img v-else src="@/assets/launcher-icon.png" class="context-icon" alt="" />
-            <div class="context-main">
-              <div class="context-name">{{ name.trim() || t('instanceEdit.titleEdit') }}</div>
-              <div class="context-meta">
-                {{ t('instanceEdit.version') }}：{{ store.versionById(versionId ?? '')?.version ?? '—' }}
-                · {{ t('instanceEdit.home') }}：{{ homeLabel }}
-                <template v-if="defaultProfile"> · {{ t('instanceEdit.defaultProfile') }}：{{ defaultProfile }}</template>
-              </div>
-            </div>
-            <a-tag v-if="editingId" size="small" color="arcoblue">{{ editingId.slice(0, 8) }}</a-tag>
-          </div>
-
-          <div class="dl-card edit-card">
-            <a-form layout="vertical" class="edit-form" :model="{}">
-              <a-form-item :label="t('instanceEdit.name')" required>
-                <a-input v-model="name" :placeholder="t('instanceEdit.namePlaceholder')" style="max-width: 360px" />
-              </a-form-item>
-
-              <a-form-item v-if="editingId" :label="t('instanceEdit.icon')">
-                <div class="icon-editor">
-                  <img v-if="iconUrl" :src="iconUrl" class="icon-preview" alt="" />
-                  <img v-else src="@/assets/launcher-icon.png" class="icon-preview" alt="" />
-                  <div class="icon-actions">
-                    <a-input
-                      v-model="iconInput"
-                      :placeholder="t('instanceEdit.iconUrlHint')"
-                      allow-clear
-                      style="max-width: 300px"
-                    />
-                    <a-space>
-                      <a-button size="small" :loading="iconBusy" :disabled="!iconInput.trim()" @click="applyIconInput">
-                        {{ t('instanceEdit.iconApply') }}
-                      </a-button>
-                      <a-button size="small" :loading="iconBusy" @click="pickIconFile">
-                        {{ t('instanceEdit.iconPickFile') }}
-                      </a-button>
-                      <a-button v-if="iconUrl" size="small" status="danger" @click="clearIcon">
-                        {{ t('instanceEdit.iconClear') }}
-                      </a-button>
-                    </a-space>
-                    <p class="icon-hint">{{ t('instanceEdit.iconHint') }}</p>
-                  </div>
-                </div>
-              </a-form-item>
-
-              <a-form-item :label="t('instanceEdit.version')" required>
-                <a-select v-model="versionId" style="max-width: 360px">
-                  <a-option v-for="v in store.versions" :key="v.id" :value="v.id">{{ v.version }}</a-option>
-                </a-select>
-              </a-form-item>
-
-              <a-form-item :label="t('instanceEdit.home')" required>
-                <a-select v-model="homeId" style="max-width: 360px">
-                  <a-option :value="DEDICATED">{{ t('instanceEdit.dedicatedHome') }}</a-option>
-                  <a-option v-for="h in store.homes" :key="h.id" :value="h.id">
-                    {{ h.name }}（{{ h.path }}）
-                  </a-option>
-                </a-select>
-                <a-alert v-if="homeId === DEDICATED" type="info" class="dedicated-hint">
-                  {{ t('instanceEdit.dedicatedHomeHint', { path: dedicatedPath }) }}
-                </a-alert>
-              </a-form-item>
-
-              <a-form-item
-                v-if="homeId && homeId !== DEDICATED"
-                :label="t('instanceEdit.defaultProfile')"
-              >
-                <a-select
-                  v-model="defaultProfile"
-                  :placeholder="t('instanceEdit.defaultProfilePlaceholder')"
-                  allow-clear
-                  style="max-width: 360px"
-                >
-                  <a-option v-for="p in profiles" :key="p" :value="p">{{ p }}</a-option>
-                </a-select>
-                <p class="icon-hint">{{ t('instanceEdit.defaultProfileHint') }}</p>
-              </a-form-item>
-
-              <a-form-item :label="t('instanceEdit.env')">
-                <p class="icon-hint">{{ t('instanceEdit.envDesc') }}</p>
-                <div v-for="(row, idx) in envRows" :key="idx" class="env-row">
-                  <a-input
-                    v-model="row.key"
-                    :placeholder="t('instanceEdit.envKey')"
-                    :status="envKeyError(row) ? 'error' : undefined"
-                    class="env-key"
-                  />
-                  <a-input v-model="row.value" :placeholder="t('instanceEdit.envValue')" class="env-value" />
-                  <a-button status="danger" type="text" @click="removeEnvRow(idx)">
-                    {{ t('instances.table.delete') }}
-                  </a-button>
-                  <div v-if="envKeyError(row)" class="env-error">{{ envKeyError(row) }}</div>
-                </div>
-                <a-empty v-if="envRows.length === 0" :description="t('instanceEdit.envAdd')" />
-                <a-button size="small" class="env-add-btn" @click="addEnvRow">{{ t('instanceEdit.envAdd') }}</a-button>
-              </a-form-item>
-
-              <a-form-item v-if="editingId" :label="t('instanceEdit.port')">
-                <a-space>
-                  <a-input
-                    v-model="portInput"
-                    :placeholder="t('instanceEdit.portPlaceholder')"
-                    allow-clear
-                    style="width: 200px"
-                    @press-enter="applyPort"
-                  />
-                  <a-button size="small" :loading="portBusy" @click="applyPort">
-                    {{ t('instanceEdit.portApply') }}
-                  </a-button>
-                </a-space>
-                <p class="icon-hint">{{ t('instanceEdit.portHint') }}</p>
-              </a-form-item>
-
-              <a-form-item v-if="editingId" :label="t('instanceEdit.files')">
-                <a-space>
-                  <a-button size="small" :loading="dirBusy" @click="onOpenDirectory">
-                    {{ t('instanceEdit.openDirectory') }}
-                  </a-button>
-                  <a-button size="small" :loading="logBusy" @click="onViewLog">
-                    {{ t('instanceEdit.viewLog') }}
-                  </a-button>
-                </a-space>
-                <p class="icon-hint">{{ t('instanceEdit.filesHint') }}</p>
-              </a-form-item>
-            </a-form>
-
-            <div class="footer-actions">
-              <a-button type="primary" size="large" :disabled="!formValid" :loading="saving" @click="onSave">
-                {{ t('instanceEdit.save') }}
-              </a-button>
-              <a-button size="large" @click="router.push({ name: 'instances' })">{{ t('instanceEdit.cancel') }}</a-button>
-            </div>
+  <div class="dl-page edit-page">
+    <!-- Clean Inspector Card -->
+    <div class="dl-card edit-container-card">
+      <!-- Top Profile Overview -->
+      <div class="edit-overview-header">
+        <div class="overview-avatar">
+          <img v-if="iconUrl" :src="iconUrl" alt="" />
+          <img v-else src="@/assets/launcher-icon.png" alt="" />
+        </div>
+        <div class="overview-info">
+          <div class="overview-title">{{ name.trim() || t('instanceEdit.titleEdit') }}</div>
+          <div class="overview-subtitle tnum">
+            {{ store.versionById(versionId ?? '')?.version ?? '—' }} · {{ homeLabel }}
+            <template v-if="defaultProfile"> · {{ defaultProfile }}</template>
           </div>
         </div>
-      </a-scrollbar>
-    </section>
+        <span v-if="editingId" class="overview-id-chip tnum">{{ editingId.slice(0, 8) }}</span>
+      </div>
+
+      <!-- Form Body -->
+      <a-form layout="vertical" class="apple-edit-form" :model="{}">
+        <a-form-item :label="t('instanceEdit.name')" required>
+          <a-input v-model="name" :placeholder="t('instanceEdit.namePlaceholder')" style="max-width: 420px" />
+        </a-form-item>
+
+        <a-form-item v-if="editingId" :label="t('instanceEdit.icon')">
+          <div class="icon-editor-block">
+            <div class="icon-avatar-preview">
+              <img v-if="iconUrl" :src="iconUrl" alt="" />
+              <img v-else src="@/assets/launcher-icon.png" alt="" />
+            </div>
+            <div class="icon-ctrl-wrap">
+              <div class="icon-url-row">
+                <a-input
+                  v-model="iconInput"
+                  :placeholder="t('instanceEdit.iconUrlHint')"
+                  allow-clear
+                  style="max-width: 300px"
+                />
+                <button
+                  class="mac-secondary-btn"
+                  :disabled="!iconInput.trim() || iconBusy"
+                  @click="applyIconInput"
+                >
+                  {{ t('instanceEdit.iconApply') }}
+                </button>
+              </div>
+              <div class="icon-actions-row">
+                <button class="mac-secondary-btn" :disabled="iconBusy" @click="pickIconFile">
+                  {{ t('instanceEdit.iconPickFile') }}
+                </button>
+                <button v-if="iconUrl" class="mac-action-pill danger" @click="clearIcon">
+                  {{ t('instanceEdit.iconClear') }}
+                </button>
+              </div>
+            </div>
+          </div>
+        </a-form-item>
+
+        <a-form-item :label="t('instanceEdit.version')" required>
+          <a-select v-model="versionId" style="max-width: 420px">
+            <a-option v-for="v in store.versions" :key="v.id" :value="v.id">{{ v.version }}</a-option>
+          </a-select>
+        </a-form-item>
+
+        <a-form-item :label="t('instanceEdit.home')" required>
+          <a-select v-model="homeId" style="max-width: 420px">
+            <a-option :value="DEDICATED">{{ t('instanceEdit.dedicatedHome') }}</a-option>
+            <a-option v-for="h in store.homes" :key="h.id" :value="h.id">
+              {{ h.name }}（{{ h.path }}）
+            </a-option>
+          </a-select>
+          <p v-if="homeId === DEDICATED" class="field-hint-text">
+            {{ t('instanceEdit.dedicatedHomeHint', { path: dedicatedPath }) }}
+          </p>
+        </a-form-item>
+
+        <a-form-item
+          v-if="homeId && homeId !== DEDICATED"
+          :label="t('instanceEdit.defaultProfile')"
+        >
+          <a-select
+            v-model="defaultProfile"
+            :placeholder="t('instanceEdit.defaultProfilePlaceholder')"
+            allow-clear
+            style="max-width: 420px"
+          >
+            <a-option v-for="p in profiles" :key="p" :value="p">{{ p }}</a-option>
+          </a-select>
+          <p class="field-hint-text">{{ t('instanceEdit.defaultProfileHint') }}</p>
+        </a-form-item>
+
+        <a-form-item v-if="editingId" :label="t('instanceEdit.port')">
+          <div class="port-row">
+            <a-input
+              v-model="portInput"
+              :placeholder="t('instanceEdit.portPlaceholder')"
+              allow-clear
+              style="width: 180px"
+              @press-enter="applyPort"
+            />
+            <button class="mac-secondary-btn" :disabled="portBusy" @click="applyPort">
+              {{ t('instanceEdit.portApply') }}
+            </button>
+          </div>
+        </a-form-item>
+
+        <a-form-item :label="t('instanceEdit.env')">
+          <p class="field-hint-text">{{ t('instanceEdit.envDesc') }}</p>
+          <div class="env-editor-wrap">
+            <div v-for="(row, idx) in envRows" :key="idx" class="env-item-row">
+              <input
+                v-model="row.key"
+                :placeholder="t('instanceEdit.envKey')"
+                class="apple-input-sm env-k"
+                :class="{ 'has-error': !!envKeyError(row) }"
+              />
+              <input
+                v-model="row.value"
+                :placeholder="t('instanceEdit.envValue')"
+                class="apple-input-sm env-v"
+              />
+              <button class="mac-micro-btn danger" @click="removeEnvRow(idx)">
+                {{ t('instances.table.delete') }}
+              </button>
+              <div v-if="envKeyError(row)" class="env-error-chip">{{ envKeyError(row) }}</div>
+            </div>
+            <button class="mac-secondary-btn add-env-btn" @click="addEnvRow">
+              + {{ t('instanceEdit.envAdd') }}
+            </button>
+          </div>
+        </a-form-item>
+      </a-form>
+
+      <!-- Footer Buttons -->
+      <div class="edit-footer-bar">
+        <button class="mac-secondary-btn" @click="router.push({ name: 'instances' })">
+          {{ t('instanceEdit.cancel') }}
+        </button>
+        <button
+          class="mac-primary-btn"
+          :disabled="!formValid || saving"
+          @click="onSave"
+        >
+          {{ t('instanceEdit.save') }}
+        </button>
+      </div>
+    </div>
   </div>
 </template>
 
 <style lang="scss" scoped>
-.icon-editor {
-  display: flex;
-  gap: 16px;
-  align-items: flex-start;
-}
-
-.icon-preview {
-  width: 64px;
-  height: 64px;
-  border-radius: 12px;
-  object-fit: cover;
-  flex-shrink: 0;
-  border: 1px solid var(--color-border-2);
-}
-
-.icon-actions {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.icon-hint {
-  margin: 0;
-  font-size: 12px;
-  color: var(--color-text-3);
-}
-
 .edit-page {
-  display: flex;
-  height: calc(100vh - var(--dl-header-height));
-}
-
-.edit-content {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-}
-
-.edit-inner {
-  padding: 20px 24px 80px;
-  max-width: 860px;
+  max-width: 800px;
   margin: 0 auto;
 }
 
-.edit-card {
-  width: 100%;
-  box-sizing: border-box;
+.edit-container-card {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
 
-  & + & {
-    margin-top: 16px;
+.edit-overview-header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--apple-separator);
+}
+
+.overview-avatar {
+  width: 44px;
+  height: 44px;
+  border-radius: 11px;
+  overflow: hidden;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12);
+  flex-shrink: 0;
+
+  img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
   }
 }
 
-.context-bar {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 16px;
-  padding: 14px 20px;
-}
-
-.context-icon {
-  width: 40px;
-  height: 40px;
-  border-radius: 10px;
-  object-fit: cover;
-  flex-shrink: 0;
-  border: 1px solid var(--color-border-2);
-}
-
-.context-main {
+.overview-info {
   flex: 1;
   min-width: 0;
+
+  .overview-title {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--color-text-1);
+    letter-spacing: -0.015em;
+  }
+
+  .overview-subtitle {
+    font-size: 12px;
+    color: var(--color-text-3);
+    margin-top: 2px;
+  }
 }
 
-.context-name {
-  font-size: 15px;
-  font-weight: 700;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.overview-id-chip {
+  padding: 2px 8px;
+  font-size: 11.5px;
+  border-radius: 6px;
+  background: var(--apple-group-bg);
+  color: var(--color-text-3);
 }
 
-.context-meta {
-  margin-top: 2px;
+.icon-editor-block {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+
+  .icon-avatar-preview {
+    width: 54px;
+    height: 54px;
+    border-radius: 12px;
+    overflow: hidden;
+    border: 1px solid var(--apple-card-border);
+    flex-shrink: 0;
+
+    img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+  }
+
+  .icon-ctrl-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .icon-url-row,
+  .icon-actions-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+}
+
+.field-hint-text {
+  margin: 4px 0 0;
   font-size: 12px;
   color: var(--color-text-3);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.5;
 }
 
-.edit-form {
-  width: 100%;
-}
-
-.dedicated-hint {
-  margin-top: 8px;
-  max-width: 360px;
-}
-
-.env-row {
+.port-row {
   display: flex;
-  gap: 8px;
   align-items: center;
-  flex-wrap: wrap;
-  margin-bottom: 10px;
+  gap: 8px;
 }
 
-.env-key {
-  width: 240px;
-  font-family: monospace;
+.apple-input-sm {
+  height: 30px;
+  padding: 0 10px;
+  font-size: 13px;
+  border-radius: 7px;
+  border: 1px solid var(--apple-card-border);
+  background: var(--apple-group-bg);
+  color: var(--color-text-1);
+  outline: none;
+  transition: all 0.16s ease;
+
+  &:focus {
+    background: var(--apple-card-bg);
+    border-color: rgb(var(--primary-6));
+    box-shadow: 0 0 0 2px rgb(var(--primary-6) / 18%);
+  }
+
+  &.has-error {
+    border-color: rgb(var(--red-6));
+  }
 }
 
-.env-value {
-  flex: 1;
-  min-width: 220px;
-}
-
-.env-error {
-  width: 100%;
-  color: rgb(var(--red-6));
-  font-size: 12px;
-}
-
-.env-add-btn {
-  margin-top: 4px;
-}
-
-.footer-actions {
-  margin-top: 20px;
+.env-editor-wrap {
   display: flex;
-  gap: 12px;
-  justify-content: center;
-  position: sticky;
-  bottom: 0;
-  padding: 12px 0 4px;
-  background: linear-gradient(transparent, var(--color-bg-2) 32%);
-  z-index: 5;
+  flex-direction: column;
+  gap: 8px;
+
+  .env-item-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+
+    .env-k {
+      width: 160px;
+      font-family: 'SF Mono', monospace;
+    }
+
+    .env-v {
+      flex: 1;
+      max-width: 320px;
+      font-family: 'SF Mono', monospace;
+    }
+  }
+
+  .add-env-btn {
+    align-self: flex-start;
+  }
+}
+
+.env-error-chip {
+  font-size: 11px;
+  color: rgb(var(--red-6));
+}
+
+.edit-footer-bar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  padding-top: 16px;
+  border-top: 1px solid var(--apple-separator);
+}
+
+.mac-primary-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 16px;
+  font-size: 13px;
+  font-weight: 500;
+  border-radius: 8px;
+  border: none;
+  background: rgb(var(--primary-6));
+  color: #fff;
+  cursor: pointer;
+  transition: all 0.16s ease;
+
+  &:hover:not(:disabled) {
+    filter: brightness(1.06);
+  }
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  &:active:not(:disabled) {
+    transform: scale(var(--apple-active-scale));
+  }
+}
+
+.mac-secondary-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 12px;
+  font-size: 12.5px;
+  font-weight: 500;
+  border-radius: 7px;
+  border: 1px solid var(--apple-card-border);
+  background: var(--apple-card-bg);
+  color: var(--color-text-2);
+  cursor: pointer;
+  transition: all 0.16s ease;
+
+  &:hover:not(:disabled) {
+    background: var(--apple-group-bg);
+    color: var(--color-text-1);
+  }
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  &:active:not(:disabled) {
+    transform: scale(var(--apple-active-scale));
+  }
+}
+
+.mac-micro-btn {
+  padding: 3px 8px;
+  font-size: 12px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--color-text-2);
+  cursor: pointer;
+  transition: all 0.15s ease;
+
+  &.danger {
+    color: rgb(var(--red-6));
+
+    &:hover {
+      background: rgb(var(--red-6) / 12%);
+    }
+  }
+
+  &:active {
+    transform: scale(var(--apple-active-scale));
+  }
+}
+
+.mac-action-pill {
+  border: 1px solid var(--apple-card-border);
+  background: var(--apple-card-bg);
+  color: var(--color-text-2);
+  border-radius: 6px;
+  padding: 3px 9px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+
+  &.danger {
+    color: rgb(var(--red-6));
+
+    &:hover {
+      background: rgb(var(--red-6) / 12%);
+    }
+  }
+
+  &:active {
+    transform: scale(var(--apple-active-scale));
+  }
 }
 </style>

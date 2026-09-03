@@ -1,12 +1,44 @@
-// Global styles for DSH Launcher.
+// Global styles for DSH Launcher — Apple Design System
 
 :root {
   --dl-header-height: 52px;
-  --dl-content-max: 1080px;
-  --dl-sider-width: 208px;
-  --dl-sider-collapsed-width: 60px;
-  --dl-card-radius: 10px;
-  --dl-page-gap: 16px;
+  --dl-traffic-height: 42px;
+  --dl-content-max: 1120px;
+  --dl-sider-width: 216px;
+  --dl-sider-collapsed-width: 68px;
+  --dl-card-radius: 14px;
+  --dl-page-gap: 18px;
+
+  // Apple Spring & Physics Timing
+  --apple-spring-curve: cubic-bezier(0.16, 1, 0.3, 1);
+  --apple-bounce-curve: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --apple-active-scale: 0.97;
+  --apple-duration: 0.28s;
+
+  // Materials & Borders (Light Mode defaults)
+  --apple-card-bg: rgba(255, 255, 255, 0.82);
+  --apple-card-border: rgba(0, 0, 0, 0.08);
+  --apple-card-border-top: rgba(255, 255, 255, 0.9);
+  --apple-card-shadow: 0 4px 16px -2px rgba(0, 0, 0, 0.04), 0 1px 3px rgba(0, 0, 0, 0.03);
+  --apple-card-hover-shadow: 0 8px 24px -4px rgba(0, 0, 0, 0.08), 0 2px 6px rgba(0, 0, 0, 0.04);
+  --apple-sidebar-bg: rgba(246, 246, 248, 0.85);
+  --apple-sidebar-border: rgba(0, 0, 0, 0.07);
+  --apple-content-bg: #f9f9fb;
+  --apple-group-bg: rgba(0, 0, 0, 0.03);
+  --apple-separator: rgba(0, 0, 0, 0.06);
+}
+
+body[arco-theme='dark'] {
+  --apple-card-bg: rgba(36, 36, 42, 0.78);
+  --apple-card-border: rgba(255, 255, 255, 0.08);
+  --apple-card-border-top: rgba(255, 255, 255, 0.14);
+  --apple-card-shadow: 0 6px 20px -3px rgba(0, 0, 0, 0.35), 0 1px 3px rgba(0, 0, 0, 0.2);
+  --apple-card-hover-shadow: 0 10px 30px -4px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.3);
+  --apple-sidebar-bg: rgba(25, 25, 28, 0.82);
+  --apple-sidebar-border: rgba(255, 255, 255, 0.07);
+  --apple-content-bg: #16161a;
+  --apple-group-bg: rgba(255, 255, 255, 0.04);
+  --apple-separator: rgba(255, 255, 255, 0.07);
 }
 
 * {
@@ -19,35 +51,57 @@ body,
   height: 100%;
   margin: 0;
   padding: 0;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 body {
   font-family:
+    -apple-system,
+    BlinkMacSystemFont,
+    'SF Pro Text',
+    'SF Pro Display',
     'PingFang SC',
-    'Microsoft YaHei',
     'Segoe UI',
     system-ui,
-    -apple-system,
     sans-serif;
-  // Use --color-bg-1 (solid): --color-fill-2 is a translucent white in dark
-  // mode, which would render near-white over the browser's default white
-  // body background instead of the intended dark page background.
-  background-color: var(--color-bg-1);
+  background-color: var(--apple-content-bg);
   color: var(--color-text-1);
+  letter-spacing: -0.01em;
 }
 
+// Typography Enhancements
+h1, h2, h3, h4, .apple-title {
+  letter-spacing: -0.02em;
+  font-weight: 600;
+}
+
+.tnum {
+  font-feature-settings: "tnum";
+  font-variant-numeric: tabular-nums;
+}
+
+// Layout Page Container
 .dl-page {
   max-width: var(--dl-content-max);
   margin: 0 auto;
-  padding: 20px 24px 40px;
+  padding: 24px 28px 48px;
 }
 
+// Apple-Grade Glass Card
 .dl-card {
-  background: var(--color-bg-2);
-  border: 1px solid var(--color-border-1);
+  background: var(--apple-card-bg);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  border: 1px solid var(--apple-card-border);
+  border-top: 1px solid var(--apple-card-border-top);
   border-radius: var(--dl-card-radius);
   padding: 20px 24px;
-  box-shadow: 0 1px 3px rgb(0 0 0 / 6%);
+  box-shadow: var(--apple-card-shadow);
+  transition:
+    transform var(--apple-duration) var(--apple-spring-curve),
+    box-shadow var(--apple-duration) var(--apple-spring-curve),
+    border-color var(--apple-duration) var(--apple-spring-curve);
 
   & + & {
     margin-top: var(--dl-page-gap);
@@ -65,6 +119,8 @@ body {
     margin: 0;
     font-size: 16px;
     font-weight: 600;
+    letter-spacing: -0.015em;
+    color: var(--color-text-1);
   }
 }
 
@@ -72,7 +128,7 @@ body {
   margin: -8px 0 16px;
   font-size: 13px;
   color: var(--color-text-3);
-  line-height: 1.6;
+  line-height: 1.55;
 }
 
 .dl-toolbar {
@@ -82,7 +138,189 @@ body {
 }
 
 .dl-empty-action {
-  margin-top: 12px;
+  margin-top: 16px;
   display: flex;
   justify-content: center;
+}
+
+// Apple Physical Motion: Active Feedback
+button,
+.arco-btn,
+.nav-item,
+.apple-interactive {
+  transition:
+    transform 0.12s ease-out,
+    background-color 0.15s ease,
+    color 0.15s ease,
+    box-shadow 0.15s ease;
+
+  &:active:not(:disabled):not(.is-disabled) {
+    transform: scale(var(--apple-active-scale));
+  }
+}
+
+// Apple Status Indicator Dots
+.apple-status-dot {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 500;
+
+  &::before {
+    content: '';
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    transition: all 0.25s ease;
+  }
+
+  &.running {
+    color: rgb(var(--green-6));
+    &::before {
+      background-color: rgb(var(--green-6));
+      box-shadow: 0 0 0 2px rgb(var(--green-6) / 24%);
+      animation: apple-pulse 2.2s infinite var(--apple-spring-curve);
+    }
+  }
+
+  &.starting {
+    color: rgb(var(--orange-6));
+    &::before {
+      background-color: rgb(var(--orange-6));
+      box-shadow: 0 0 0 2px rgb(var(--orange-6) / 24%);
+      animation: apple-pulse 1.4s infinite var(--apple-spring-curve);
+    }
+  }
+
+  &.stopped,
+  &.idle {
+    color: var(--color-text-3);
+    &::before {
+      background-color: var(--color-text-4);
+    }
+  }
+
+  &.error {
+    color: rgb(var(--red-6));
+    &::before {
+      background-color: rgb(var(--red-6));
+    }
+  }
+}
+
+@keyframes apple-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgb(var(--green-6) / 40%);
+  }
+  70% {
+    box-shadow: 0 0 0 5px rgb(var(--green-6) / 0%);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgb(var(--green-6) / 0%);
+  }
+}
+
+// Apple Segmented Control capsule
+.apple-segmented {
+  display: inline-flex;
+  background: var(--apple-group-bg);
+  border-radius: 8px;
+  padding: 3px;
+  border: 1px solid var(--apple-card-border);
+
+  button {
+    border: none;
+    background: transparent;
+    padding: 5px 14px;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--color-text-2);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.16s ease;
+
+    &.active {
+      background: var(--apple-card-bg);
+      color: var(--color-text-1);
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+      font-weight: 600;
+    }
+
+    &:hover:not(.active) {
+      color: var(--color-text-1);
+    }
+  }
+}
+
+// Table styling improvements (NSTableView feel)
+.arco-table {
+  background: transparent !important;
+
+  .arco-table-th {
+    background: transparent !important;
+    border-bottom: 1px solid var(--apple-separator) !important;
+    color: var(--color-text-3) !important;
+    font-size: 12px !important;
+    font-weight: 600 !important;
+    letter-spacing: 0.01em;
+    padding: 10px 14px !important;
+  }
+
+  .arco-table-td {
+    border-bottom: 1px solid var(--apple-separator) !important;
+    padding: 12px 14px !important;
+    font-size: 13px;
+    transition: background 0.15s ease;
+  }
+
+  .arco-table-tr:hover .arco-table-td {
+    background-color: var(--apple-group-bg) !important;
+  }
+}
+
+// Inset Group styling for settings & inspectors
+.apple-inset-group {
+  background: var(--apple-card-bg);
+  backdrop-filter: blur(20px);
+  border: 1px solid var(--apple-card-border);
+  border-top: 1px solid var(--apple-card-border-top);
+  border-radius: var(--dl-card-radius);
+  overflow: hidden;
+  box-shadow: var(--apple-card-shadow);
+
+  .apple-inset-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--apple-separator);
+    transition: background 0.15s ease;
+
+    &:last-child {
+      border-bottom: none;
+    }
+
+    &:hover {
+      background: var(--apple-group-bg);
+    }
+
+    .row-info {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+
+      .row-title {
+        font-size: 13.5px;
+        font-weight: 500;
+        color: var(--color-text-1);
+      }
+
+      .row-desc {
+        font-size: 12px;
+        color: var(--color-text-3);
+      }
+    }
+  }
 }

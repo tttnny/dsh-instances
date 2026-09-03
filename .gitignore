@@ -26,3 +26,6 @@ Thumbs.db
 
 # Parallel-dev worktrees (untracked, never commit)
 worktrees/
+
+# ZCode local state
+.zcode/

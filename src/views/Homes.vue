@@ -75,8 +75,6 @@ const busyProfile = ref<string | null>(null)
 
 const selectedHome = computed(() => store.homeById(selectedHomeId.value ?? ''))
 
-// Plugin selection lives next to the HOME selection: the watcher below
-// resets it, so it must be declared before the watcher runs.
 const selectedPluginProfile = ref('')
 
 async function loadProfiles() {
@@ -191,7 +189,7 @@ async function setDefaultProfile(instanceId: string, profile: string) {
   }
 }
 
-// --- Plugins of the selected profile ------------------------------------------
+// --- Plugins of the selected profile -----------------------------------------
 
 const installedPlugins = ref<InstalledPlugin[]>([])
 const pluginsLoading = ref(false)
@@ -303,32 +301,52 @@ const homeColumns = computed(() => [
   { title: t('homes.homeName'), dataIndex: 'name', width: 170 },
   { title: t('homes.homePath'), dataIndex: 'path', ellipsis: true, tooltip: true },
   { title: t('homes.homeUsedBy'), slotName: 'usedBy', width: 130 },
-  { title: t('instances.table.actions'), slotName: 'actions', width: 90, align: 'center' as const },
+  { title: t('instances.table.actions'), slotName: 'actions', width: 90, align: 'right' as const },
 ])
 
 const pluginColumns = computed(() => [
   { title: 'ID', slotName: 'pid', width: 320 },
-  { title: t('homes.pluginVersion'), slotName: 'pver', width: 140 },
-  { title: t('homes.pluginStatus'), slotName: 'pstatus', width: 120 },
-  { title: t('instances.table.actions'), slotName: 'pact', width: 90 },
+  { title: t('homes.pluginVersion'), slotName: 'pver', width: 130 },
+  { title: t('homes.pluginStatus'), slotName: 'pstatus', width: 110 },
+  { title: t('instances.table.actions'), slotName: 'pact', width: 80, align: 'right' as const },
 ])
 </script>
 
 <template>
   <div class="dl-page homes-page">
-    <div class="dl-card">
+    <!-- Home Management Card -->
+    <div class="dl-card home-mgmt-card">
       <div class="dl-card-title">
         <h3>{{ t('homes.homesTitle') }}</h3>
       </div>
       <p class="dl-card-desc">{{ t('homes.homesDesc') }}</p>
 
       <div class="home-add-row">
-        <a-input v-model="newHomeName" :placeholder="t('homes.homeNamePlaceholder')" style="width: 200px" />
-        <a-input v-model="newHomePath" :placeholder="t('homes.homePathPlaceholder')" class="home-path-input" />
-        <a-button @click="onPickDir">{{ t('homes.pickDir') }}</a-button>
-        <a-button type="primary" :disabled="!newHomeName.trim() || !newHomePath.trim()" @click="onAddHome">
+        <input
+          v-model="newHomeName"
+          type="text"
+          class="apple-input-sm"
+          :placeholder="t('homes.homeNamePlaceholder')"
+          style="width: 170px"
+        />
+        <div class="path-input-group">
+          <input
+            v-model="newHomePath"
+            type="text"
+            class="apple-input-sm path-input"
+            :placeholder="t('homes.homePathPlaceholder')"
+          />
+          <button class="mac-secondary-btn" @click="onPickDir">
+            {{ t('homes.pickDir') }}
+          </button>
+        </div>
+        <button
+          class="mac-primary-btn"
+          :disabled="!newHomeName.trim() || !newHomePath.trim()"
+          @click="onAddHome"
+        >
           {{ t('homes.addHome') }}
-        </a-button>
+        </button>
       </div>
 
       <a-table
@@ -341,10 +359,11 @@ const pluginColumns = computed(() => [
           showCheckedAll: false,
           selectedRowKeys: selectedHomeId ? [selectedHomeId] : [],
         }"
+        class="apple-styled-table"
         @selection-change="(keys: (string | number)[]) => (selectedHomeId = String(keys[0] ?? ''))"
       >
         <template #usedBy="{ record }">
-          <span class="home-used">{{ t('homes.homeUsedByCount', { count: homeUsedBy(record.id) }) }}</span>
+          <span class="home-used tnum">{{ t('homes.homeUsedByCount', { count: homeUsedBy(record.id) }) }}</span>
         </template>
         <template #actions="{ record }">
           <a-popconfirm
@@ -352,9 +371,12 @@ const pluginColumns = computed(() => [
             :disabled="homeUsedBy(record.id) > 0"
             @ok="onRemoveHome(record.id)"
           >
-            <a-button size="small" status="danger" :disabled="homeUsedBy(record.id) > 0">
+            <button
+              class="mac-action-pill danger"
+              :disabled="homeUsedBy(record.id) > 0"
+            >
               {{ t('homes.deleteHome') }}
-            </a-button>
+            </button>
           </a-popconfirm>
         </template>
         <template #empty>
@@ -363,91 +385,126 @@ const pluginColumns = computed(() => [
       </a-table>
     </div>
 
-    <div class="dl-card">
+    <!-- Profiles & Plugins Section -->
+    <div class="dl-card profile-mgmt-card">
       <div class="dl-card-title">
-        <h3>{{ t('homes.profilesTitle') }}</h3>
-        <span v-if="selectedHome" class="profiles-home">{{ selectedHome.name }}</span>
+        <div class="title-with-pill">
+          <h3>{{ t('homes.profilesTitle') }}</h3>
+          <span v-if="selectedHome" class="home-tag-pill">{{ selectedHome.name }}</span>
+        </div>
       </div>
       <p class="dl-card-desc">{{ t('homes.profilesDesc') }}</p>
 
       <template v-if="selectedHomeId">
-        <div v-if="instancesOfHome(selectedHomeId).length > 0" class="used-by">
+        <div v-if="instancesOfHome(selectedHomeId).length > 0" class="used-by-pill-box">
           <span class="used-by-label">{{ t('homes.usedByInstances') }}：</span>
-          <span v-for="inst in instancesOfHome(selectedHomeId)" :key="inst.id" class="used-by-item">
-            {{ inst.name }}（{{ t('homes.defaultOf', { instance: inst.name }) }}：{{ inst.default_profile ?? t('homes.noDefault') }}）
-            <a-select
-              :model-value="inst.default_profile ?? undefined"
-              :placeholder="t('homes.noDefault')"
-              allow-clear
-              size="mini"
-              style="width: 140px"
-              @change="(v: unknown) => v && setDefaultProfile(inst.id, String(v))"
-            >
-              <a-option v-for="p in profiles" :key="p" :value="p">{{ p }}</a-option>
-            </a-select>
-          </span>
+          <div class="used-by-list">
+            <span v-for="inst in instancesOfHome(selectedHomeId)" :key="inst.id" class="used-by-item">
+              <span class="inst-chip-name">{{ inst.name }}</span>
+              <span class="inst-chip-desc">（{{ t('homes.defaultOf', { instance: inst.name }) }}：{{ inst.default_profile ?? t('homes.noDefault') }}）</span>
+              <a-select
+                :model-value="inst.default_profile ?? undefined"
+                :placeholder="t('homes.noDefault')"
+                allow-clear
+                size="mini"
+                style="width: 130px"
+                @change="(v: unknown) => v && setDefaultProfile(inst.id, String(v))"
+              >
+                <a-option v-for="p in profiles" :key="p" :value="p">{{ p }}</a-option>
+              </a-select>
+            </span>
+          </div>
         </div>
         <p v-else class="dl-card-desc">{{ t('homes.noInstances') }}</p>
 
-        <div v-if="profilesLoading">{{ t('common.loading') }}</div>
+        <div v-if="profilesLoading" class="dl-card-desc">{{ t('common.loading') }}</div>
         <a-empty v-else-if="profiles.length === 0" :description="t('homes.profilesEmpty')" />
 
-        <div v-for="p in profiles" :key="p" class="profile-item">
-          <template v-if="renamingProfile === p">
-            <a-input v-model="renameValue" class="profile-item-name" @press-enter="confirmRenameProfile" />
-            <a-button size="small" type="primary" :loading="busyProfile === p" @click="confirmRenameProfile">
-              {{ t('homes.profileRenameSave') }}
-            </a-button>
-            <a-button size="small" @click="renamingProfile = null">{{ t('common.cancel') }}</a-button>
-          </template>
-          <template v-else-if="copyingProfile === p">
-            <a-input v-model="copyProfileName" class="profile-item-name" @press-enter="confirmCopyProfile" />
-            <a-button size="small" type="primary" :loading="copyProfileBusy" @click="confirmCopyProfile">
-              {{ t('homes.profileCopySave') }}
-            </a-button>
-            <a-button size="small" @click="copyingProfile = null">{{ t('common.cancel') }}</a-button>
-          </template>
-          <template v-else>
-            <a-radio
-              :model-value="selectedPluginProfile === p"
-              @change="selectedPluginProfile = p"
-            >
-              <span class="profile-item-name">{{ p }}</span>
-            </a-radio>
-            <span class="profile-item-actions">
-              <a-button size="small" @click="startRenameProfile(p)">{{ t('homes.profileRename') }}</a-button>
-              <a-button size="small" @click="startCopyProfile(p)">{{ t('homes.profileCopy') }}</a-button>
-              <a-popconfirm
-                :content="t('homes.profileDeleteConfirm', { name: p })"
-                @ok="confirmDeleteProfile(p)"
-              >
-                <a-button size="small" status="danger" :loading="busyProfile === p">
-                  {{ t('instances.table.delete') }}
-                </a-button>
-              </a-popconfirm>
-            </span>
-          </template>
+        <!-- Profile Items Inset List -->
+        <div class="profile-items-group">
+          <div v-for="p in profiles" :key="p" class="profile-item-row">
+            <template v-if="renamingProfile === p">
+              <input v-model="renameValue" class="apple-input-sm" @press-enter="confirmRenameProfile" />
+              <div class="inline-btn-group">
+                <button class="mac-primary-btn" :disabled="busyProfile === p" @click="confirmRenameProfile">
+                  {{ t('homes.profileRenameSave') }}
+                </button>
+                <button class="mac-secondary-btn" @click="renamingProfile = null">
+                  {{ t('common.cancel') }}
+                </button>
+              </div>
+            </template>
+
+            <template v-else-if="copyingProfile === p">
+              <input v-model="copyProfileName" class="apple-input-sm" @press-enter="confirmCopyProfile" />
+              <div class="inline-btn-group">
+                <button class="mac-primary-btn" :disabled="copyProfileBusy" @click="confirmCopyProfile">
+                  {{ t('homes.profileCopySave') }}
+                </button>
+                <button class="mac-secondary-btn" @click="copyingProfile = null">
+                  {{ t('common.cancel') }}
+                </button>
+              </div>
+            </template>
+
+            <template v-else>
+              <div class="profile-left-col" @click="selectedPluginProfile = p">
+                <div class="apple-radio-circle" :class="{ checked: selectedPluginProfile === p }">
+                  <div class="inner-dot" />
+                </div>
+                <span class="profile-title">{{ p }}</span>
+              </div>
+              <div class="profile-item-actions">
+                <button class="mac-micro-btn" @click="startRenameProfile(p)">{{ t('homes.profileRename') }}</button>
+                <button class="mac-micro-btn" @click="startCopyProfile(p)">{{ t('homes.profileCopy') }}</button>
+                <a-popconfirm
+                  :content="t('homes.profileDeleteConfirm', { name: p })"
+                  @ok="confirmDeleteProfile(p)"
+                >
+                  <button class="mac-micro-btn danger" :disabled="busyProfile === p">
+                    {{ t('instances.table.delete') }}
+                  </button>
+                </a-popconfirm>
+              </div>
+            </template>
+          </div>
+
+          <div v-if="addingProfile" class="profile-item-row is-editing">
+            <input
+              v-model="newProfileName"
+              :placeholder="t('homes.profileCreatePlaceholder')"
+              class="apple-input-sm"
+              @press-enter="onCreateProfile"
+            />
+            <div class="inline-btn-group">
+              <button class="mac-primary-btn" :disabled="creatingProfile" @click="onCreateProfile">
+                {{ t('homes.profileCreate') }}
+              </button>
+              <button class="mac-secondary-btn" @click="addingProfile = false">
+                {{ t('common.cancel') }}
+              </button>
+            </div>
+          </div>
         </div>
 
-        <div v-if="addingProfile" class="profile-item">
-          <a-input
-            v-model="newProfileName"
-            :placeholder="t('homes.profileCreatePlaceholder')"
-            class="profile-item-name"
-            @press-enter="onCreateProfile"
-          />
-          <a-button size="small" type="primary" :loading="creatingProfile" @click="onCreateProfile">
-            {{ t('homes.profileCreate') }}
-          </a-button>
-          <a-button size="small" @click="addingProfile = false">{{ t('common.cancel') }}</a-button>
-        </div>
-        <a-button v-if="!addingProfile" size="small" @click="addingProfile = true">
-          {{ t('homes.profileAdd') }}
-        </a-button>
+        <button v-if="!addingProfile" class="mac-secondary-btn" style="margin-top: 10px" @click="addingProfile = true">
+          <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="8" y1="3" x2="8" y2="13" />
+            <line x1="3" y1="8" x2="13" y2="8" />
+          </svg>
+          <span>{{ t('homes.profileAdd') }}</span>
+        </button>
 
+        <!-- Plugins Section -->
         <div class="plugins-section">
-          <h4>{{ t('homes.pluginsTitle') }}</h4>
+          <div class="plugins-header">
+            <h4>{{ t('homes.pluginsTitle') }}</h4>
+            <span v-if="selectedPluginProfile" class="current-profile-pill">
+              {{ selectedPluginProfile }}
+            </span>
+          </div>
           <p class="dl-card-desc">{{ t('homes.pluginsDesc') }}</p>
+
           <template v-if="selectedPluginProfile">
             <a-table
               :columns="pluginColumns"
@@ -461,14 +518,14 @@ const pluginColumns = computed(() => [
                 onlyCurrent: true,
                 selectedRowKeys: selectedPlugins,
               }"
-              size="small"
+              class="apple-styled-table"
               @selection-change="(keys: (string | number)[]) => (selectedPlugins = keys.map(String))"
             >
               <template #pid="{ record }">
-                <span class="plugin-cell-id">{{ record.id }}</span>
+                <span class="plugin-cell-id tnum">{{ record.id }}</span>
               </template>
               <template #pver="{ record }">
-                <span v-if="record.version">{{ displayVersion(record.version) }}</span>
+                <span v-if="record.version" class="tnum">{{ displayVersion(record.version) }}</span>
                 <span v-else class="plugin-no-version">-</span>
               </template>
               <template #pstatus="{ record }">
@@ -477,6 +534,7 @@ const pluginColumns = computed(() => [
                   :disabled="pluginsBusy"
                   :checked-text="t('homes.pluginOn')"
                   :unchecked-text="t('homes.pluginOff')"
+                  size="small"
                   @change="(v: string | number | boolean) => onTogglePlugin(record, v === true)"
                 />
               </template>
@@ -485,30 +543,30 @@ const pluginColumns = computed(() => [
                   :content="t('homes.pluginUninstallConfirm', { name: record.id })"
                   @ok="onUninstallPlugin(record)"
                 >
-                  <a-button size="small" status="danger" :disabled="pluginsBusy">
+                  <button class="mac-action-pill danger" :disabled="pluginsBusy">
                     {{ t('instances.table.delete') }}
-                  </a-button>
+                  </button>
                 </a-popconfirm>
               </template>
             </a-table>
+
             <div class="plugins-batch">
-              <a-button
-                size="small"
-                type="primary"
+              <button
+                class="mac-primary-btn"
                 :disabled="selectedPlugins.length === 0 || pluginsBusy"
                 @click="batchSetEnabled(true)"
               >
                 {{ t('homes.pluginsBatchEnable', { count: selectedPlugins.length }) }}
-              </a-button>
-              <a-button
-                size="small"
-                status="danger"
+              </button>
+              <button
+                class="mac-action-pill danger"
                 :disabled="selectedPlugins.length === 0 || pluginsBusy"
                 @click="batchSetEnabled(false)"
               >
                 {{ t('homes.pluginsBatchDisable', { count: selectedPlugins.length }) }}
-              </a-button>
+              </button>
             </div>
+
             <a-empty
               v-if="!pluginsLoading && visiblePlugins.length === 0"
               :description="t('homes.pluginsEmpty')"
@@ -526,96 +584,334 @@ const pluginColumns = computed(() => [
 .homes-page {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 18px;
 }
 
 .home-add-row {
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+  align-items: center;
+  gap: 10px;
   margin-bottom: 16px;
+  flex-wrap: wrap;
+
+  .path-input-group {
+    flex: 1;
+    min-width: 260px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+
+    .path-input {
+      flex: 1;
+    }
+  }
 }
 
-.home-path-input {
-  flex: 1;
-}
-
-.home-used {
-  font-size: 12px;
-  color: var(--color-text-3);
-  white-space: nowrap;
-}
-
-.profiles-home {
-  font-size: 12px;
-  color: var(--color-text-3);
-}
-
-.used-by {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin-bottom: 12px;
+.apple-input-sm {
+  height: 30px;
+  padding: 0 10px;
   font-size: 13px;
+  border-radius: 7px;
+  border: 1px solid var(--apple-card-border);
+  background: var(--apple-group-bg);
+  color: var(--color-text-1);
+  outline: none;
+  transition: all 0.16s ease;
+
+  &:focus {
+    background: var(--apple-card-bg);
+    border-color: rgb(var(--primary-6));
+    box-shadow: 0 0 0 2px rgb(var(--primary-6) / 18%);
+  }
 }
 
-.used-by-label {
-  color: var(--color-text-3);
-}
-
-.used-by-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.profile-item {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  padding: 10px 12px;
-  border: 1px solid var(--color-border-2);
-  border-radius: 6px;
-  margin-bottom: 8px;
-  background: var(--color-fill-1);
-}
-
-.profile-item-name {
-  flex: 1;
-  min-width: 0;
-  font-size: 14px;
-}
-
-.profile-item-actions {
+.mac-primary-btn {
   display: inline-flex;
-  gap: 8px;
   align-items: center;
-  flex-shrink: 0;
+  gap: 6px;
+  height: 30px;
+  padding: 0 12px;
+  font-size: 12.5px;
+  font-weight: 500;
+  border-radius: 7px;
+  border: none;
+  background: rgb(var(--primary-6));
+  color: #fff;
+  cursor: pointer;
+  transition: all 0.16s ease;
+
+  &:hover:not(:disabled) {
+    filter: brightness(1.06);
+  }
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  &:active:not(:disabled) {
+    transform: scale(var(--apple-active-scale));
+  }
 }
 
-.plugins-section {
-  margin-top: 20px;
-  border-top: 1px solid var(--color-border-1);
-  padding-top: 16px;
+.mac-secondary-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 10px;
+  font-size: 12.5px;
+  font-weight: 500;
+  border-radius: 7px;
+  border: 1px solid var(--apple-card-border);
+  background: var(--apple-card-bg);
+  color: var(--color-text-2);
+  cursor: pointer;
+  transition: all 0.16s ease;
 
-  h4 {
-    margin: 0 0 4px;
-    font-size: 15px;
+  &:hover {
+    background: var(--apple-group-bg);
+    color: var(--color-text-1);
+  }
+
+  &:active {
+    transform: scale(var(--apple-active-scale));
+  }
+}
+
+.mac-micro-btn {
+  padding: 3px 8px;
+  font-size: 12px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--color-text-2);
+  cursor: pointer;
+  transition: all 0.15s ease;
+
+  &:hover:not(:disabled) {
+    background: var(--apple-group-bg);
+    color: var(--color-text-1);
+    border-color: var(--apple-card-border);
+  }
+
+  &.danger {
+    color: rgb(var(--red-6));
+
+    &:hover:not(:disabled) {
+      background: rgb(var(--red-6) / 12%);
+    }
+  }
+
+  &:active:not(:disabled) {
+    transform: scale(var(--apple-active-scale));
+  }
+}
+
+.mac-action-pill {
+  border: 1px solid var(--apple-card-border);
+  background: var(--apple-card-bg);
+  color: var(--color-text-2);
+  border-radius: 6px;
+  padding: 3px 9px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+
+  &:hover:not(:disabled) {
+    background: var(--apple-group-bg);
+    color: var(--color-text-1);
+  }
+
+  &.danger {
+    color: rgb(var(--red-6));
+
+    &:hover:not(:disabled) {
+      background: rgb(var(--red-6) / 12%);
+    }
+  }
+
+  &:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+
+  &:active:not(:disabled) {
+    transform: scale(var(--apple-active-scale));
+  }
+}
+
+.title-with-pill {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+
+  .home-tag-pill {
+    padding: 2px 8px;
+    font-size: 11.5px;
+    font-weight: 600;
+    border-radius: 6px;
+    background: rgb(var(--primary-6) / 14%);
+    color: rgb(var(--primary-6));
+  }
+}
+
+.used-by-pill-box {
+  background: var(--apple-group-bg);
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin-bottom: 14px;
+
+  .used-by-label {
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--color-text-2);
+  }
+
+  .used-by-list {
+    margin-top: 6px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .used-by-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--apple-card-bg);
+    border: 1px solid var(--apple-card-border);
+    padding: 3px 8px;
+    border-radius: 6px;
+    font-size: 12px;
+
+    .inst-chip-name {
+      font-weight: 600;
+      color: var(--color-text-1);
+    }
+
+    .inst-chip-desc {
+      color: var(--color-text-3);
+    }
+  }
+}
+
+// Inset Group for Profiles
+.profile-items-group {
+  border: 1px solid var(--apple-card-border);
+  border-radius: 9px;
+  overflow: hidden;
+  background: var(--apple-card-bg);
+}
+
+.profile-item-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--apple-separator);
+  transition: background 0.15s ease;
+
+  &:last-child {
+    border-bottom: none;
+  }
+
+  &:hover {
+    background: var(--apple-group-bg);
+  }
+
+  .profile-left-col {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+    flex: 1;
+
+    .apple-radio-circle {
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      border: 1.5px solid var(--color-text-4);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.15s ease;
+
+      .inner-dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: transparent;
+        transition: all 0.15s ease;
+      }
+
+      &.checked {
+        border-color: rgb(var(--primary-6));
+
+        .inner-dot {
+          background: rgb(var(--primary-6));
+        }
+      }
+    }
+
+    .profile-title {
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--color-text-1);
+    }
+  }
+
+  .profile-item-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .inline-btn-group {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+}
+
+// Plugins Section
+.plugins-section {
+  margin-top: 24px;
+  padding-top: 18px;
+  border-top: 1px solid var(--apple-separator);
+
+  .plugins-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+
+    h4 {
+      margin: 0;
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--color-text-1);
+    }
+
+    .current-profile-pill {
+      font-size: 11.5px;
+      font-weight: 600;
+      padding: 1px 7px;
+      border-radius: 6px;
+      background: rgb(var(--green-6) / 14%);
+      color: rgb(var(--green-6));
+    }
   }
 }
 
 .plugin-cell-id {
-  font-family: monospace;
-  font-size: 13px;
-}
-
-.plugin-no-version {
-  color: var(--color-text-4);
+  font-family: 'SF Mono', Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
 }
 
 .plugins-batch {
+  margin-top: 12px;
   display: flex;
   gap: 8px;
-  margin: 8px 0;
 }
 </style>

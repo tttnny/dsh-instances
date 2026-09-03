@@ -24,13 +24,9 @@ const LOG_LEVEL_OPTIONS = computed<{ value: LogLevel; label: string }[]>(() => [
   { value: 'error', label: t('settings.logLevel.error') },
 ])
 
-// --- In-app shortcut reference (t4/t14): rendered from SHORTCUT_DOCS ---------
-
 const shortcutRows = computed<{ label: string; keys: string[]; native: boolean }[]>(() =>
   SHORTCUT_DOCS.map((d) => ({ label: t(d.labelKey), keys: d.keys, native: d.native ?? false })),
 )
-
-// --- General settings -------------------------------------------------------
 
 async function patchSettings(patch: Parameters<typeof api.updateSettings>[0]) {
   try {
@@ -41,26 +37,25 @@ async function patchSettings(patch: Parameters<typeof api.updateSettings>[0]) {
   }
 }
 
-async function onThemeChange(value: string | number | boolean | Record<string, unknown> | (string | number | boolean | Record<string, unknown>)[]) {
+async function onThemeChange(value: unknown) {
   await patchSettings({ theme: String(value) as ThemeMode })
 }
 
-async function onLogLevelChange(value: string | number | boolean | Record<string, unknown> | (string | number | boolean | Record<string, unknown>)[]) {
+async function onLogLevelChange(value: unknown) {
   await patchSettings({ log_level: String(value) as LogLevel })
 }
-
-// --- Launcher update check (GitHub releases) --------------------------------
 
 const launcherVersion = ref('')
 const checkingUpdate = ref(false)
 const updateInfo = ref<LauncherUpdateInfo | null>(null)
-/** Update channel: "dev" (includes prereleases) or "release" (stable only). */
 const updateChannel = ref<'dev' | 'release'>('dev')
 
 const UPDATE_CHANNEL_OPTIONS = computed<{ value: 'dev' | 'release'; label: string }[]>(() => [
   { value: 'dev', label: t('settings.update.channel.dev') },
   { value: 'release', label: t('settings.update.channel.release') },
 ])
+
+const dataDir = ref('')
 
 onMounted(async () => {
   try {
@@ -87,17 +82,11 @@ async function onCheckUpdate() {
   }
 }
 
-async function onUpdateChannelChange(value: string | number | boolean | Record<string, unknown> | (string | number | boolean | Record<string, unknown>)[]) {
+async function onUpdateChannelChange(value: unknown) {
   const channel = String(value) === 'release' ? 'release' : 'dev'
   updateChannel.value = channel
-  // A different channel invalidates the previous result; only a fresh check
-  // is meaningful for the new channel.
   updateInfo.value = null
 }
-
-// --- Data directory ---------------------------------------------------------
-
-const dataDir = ref('')
 
 async function onOpenDataDir() {
   try {
@@ -117,43 +106,39 @@ async function onOpenLauncherLog() {
   }
 }
 
-async function onLocaleChange(value: string | number | boolean | Record<string, unknown> | (string | number | boolean | Record<string, unknown>)[]) {
+async function onLocaleChange(value: unknown) {
   await patchSettings({ locale: String(value) })
 }
 
-async function onTrayChange(value: string | number | boolean | Record<string, unknown> | (string | number | boolean | Record<string, unknown>)[]) {
+async function onTrayChange(value: unknown) {
   await patchSettings({ minimize_to_tray: Boolean(value) })
 }
 
-async function onAutostartChange(value: string | number | boolean | Record<string, unknown> | (string | number | boolean | Record<string, unknown>)[]) {
+async function onAutostartChange(value: unknown) {
   await patchSettings({ autostart: Boolean(value) })
 }
-
-// --- External terminal preference -----------------------------------------------
 
 const TERMINAL_OPTIONS = computed<{ value: string; label: string }[]>(() => [
   { value: 'system', label: t('settings.terminal.system') },
   { value: 'ghostty', label: t('settings.terminal.ghostty') },
 ])
 
-async function onTerminalChange(value: string | number | boolean | Record<string, unknown> | (string | number | boolean | Record<string, unknown>)[]) {
+async function onTerminalChange(value: unknown) {
   await patchSettings({ terminal: String(value) })
 }
 
-// --- Proxy settings -----------------------------------------------------------
-
-async function onProxyEnabledChange(value: string | number | boolean | Record<string, unknown> | (string | number | boolean | Record<string, unknown>)[]) {
+async function onProxyEnabledChange(value: unknown) {
   await patchSettings({ proxy_enabled: Boolean(value) })
 }
 
-async function onProxyApplyDshChange(value: string | number | boolean | Record<string, unknown> | (string | number | boolean | Record<string, unknown>)[]) {
+async function onProxyApplyDshChange(value: unknown) {
   await patchSettings({ proxy_apply_dsh: Boolean(value) })
 }
 
-// Text fields save on blur / Enter so typing is not interrupted.
 const proxyUrl = ref(store.settings.proxy_url ?? '')
 const proxyPort = ref(store.settings.proxy_port ?? 7890)
 const noProxy = ref(store.settings.no_proxy ?? '')
+
 watch(
   () => [store.settings.proxy_url, store.settings.proxy_port, store.settings.no_proxy] as const,
   ([url, port, np]) => {
@@ -176,8 +161,6 @@ async function onProxyFieldsSave() {
   if (Object.keys(patch).length > 0) await patchSettings(patch)
 }
 
-// --- Section anchor nav: long page, jump instead of blind scrolling ----------
-
 const sections = computed(() => [
   { key: 'general', label: t('settings.general') },
   { key: 'shortcuts', label: t('settings.shortcuts.title') },
@@ -186,6 +169,7 @@ const sections = computed(() => [
   { key: 'dataDir', label: t('settings.dataDir.title') },
 ])
 
+const activeSection = ref('general')
 const sectionEls = ref<Record<string, HTMLElement | null>>({})
 
 function setSectionRef(key: string, el: unknown) {
@@ -193,202 +177,283 @@ function setSectionRef(key: string, el: unknown) {
 }
 
 function scrollToSection(key: string) {
+  activeSection.value = key
   sectionEls.value[key]?.scrollIntoView({ behavior: 'smooth', block: 'start' })
 }
 </script>
 
 <template>
   <div class="settings-layout">
-    <aside class="settings-anchor">
+    <!-- macOS System Settings Anchor Sider -->
+    <aside class="settings-subnav">
       <button
         v-for="s in sections"
         :key="s.key"
-        class="anchor-item"
+        class="subnav-item"
+        :class="{ active: activeSection === s.key }"
         @click="scrollToSection(s.key)"
       >
-        {{ s.label }}
+        <span class="subnav-label">{{ s.label }}</span>
       </button>
     </aside>
-    <div class="dl-page settings-page">
-    <div :ref="(el: unknown) => setSectionRef('general', el)" class="dl-card section-anchor">
-      <div class="dl-card-title">
-        <h3>{{ t('settings.general') }}</h3>
-      </div>
-      <a-form :model="store.settings" layout="vertical" class="settings-form">
-        <a-form-item :label="t('settings.language')">
-          <a-select
-            :model-value="store.settings.locale"
-            style="width: 220px"
-            @change="onLocaleChange"
-          >
-            <a-option v-for="l in SUPPORTED_LOCALES" :key="l.value" :value="l.value">
-              {{ l.label }}
-            </a-option>
-          </a-select>
-        </a-form-item>
-        <a-form-item :label="t('settings.theme.label')">
-          <a-select
-            :model-value="store.settings.theme"
-            style="width: 220px"
-            @change="onThemeChange"
-          >
-            <a-option v-for="o in THEME_OPTIONS" :key="o.value" :value="o.value">
-              {{ o.label }}
-            </a-option>
-          </a-select>
-        </a-form-item>
-        <a-form-item>
-          <a-switch :model-value="store.settings.minimize_to_tray" @change="onTrayChange" />
-          <span class="switch-label">{{ t('settings.minimizeToTray') }}</span>
-        </a-form-item>
-        <a-form-item>
-          <a-switch :model-value="store.settings.autostart" @change="onAutostartChange" />
-          <span class="switch-label">{{ t('settings.autostart') }}</span>
-        </a-form-item>
-        <a-form-item :label="t('settings.logLevel.label')">
-          <a-select
-            :model-value="store.settings.log_level"
-            style="width: 220px"
-            @change="onLogLevelChange"
-          >
-            <a-option v-for="o in LOG_LEVEL_OPTIONS" :key="o.value" :value="o.value">
-              {{ o.label }}
-            </a-option>
-          </a-select>
-          <p class="settings-hint">{{ t('settings.logLevel.hint') }}</p>
-        </a-form-item>
-        <a-form-item :label="t('settings.terminal.label')">
-          <a-select
-            :model-value="store.settings.terminal"
-            style="width: 220px"
-            @change="onTerminalChange"
-          >
-            <a-option v-for="o in TERMINAL_OPTIONS" :key="o.value" :value="o.value">
-              {{ o.label }}
-            </a-option>
-          </a-select>
-          <p class="settings-hint">{{ t('settings.terminal.hint') }}</p>
-        </a-form-item>
-      </a-form>
-    </div>
 
-    <div :ref="(el: unknown) => setSectionRef('shortcuts', el)" class="dl-card section-anchor">
-      <div class="dl-card-title">
-        <h3>{{ t('settings.shortcuts.title') }}</h3>
-      </div>
-      <p class="settings-hint">{{ t('settings.shortcuts.desc') }}</p>
-      <div class="shortcut-list">
-        <div v-for="row in shortcutRows" :key="row.label" class="shortcut-row">
-          <span class="shortcut-label">{{ row.label }}<a-tag v-if="row.native" size="small" class="shortcut-native">{{ t('settings.shortcuts.nativeTag') }}</a-tag></span>
-          <span class="shortcut-keys">
-            <kbd v-for="k in row.keys" :key="k" class="shortcut-kbd">{{ k }}</kbd>
-          </span>
+    <!-- Settings Content Area -->
+    <div class="dl-page settings-content-area">
+      <!-- General Section -->
+      <div :ref="(el: unknown) => setSectionRef('general', el)" class="settings-section">
+        <div class="section-title">
+          <h3>{{ t('settings.general') }}</h3>
+        </div>
+
+        <div class="apple-inset-group">
+          <div class="apple-inset-row">
+            <div class="row-info">
+              <span class="row-title">{{ t('settings.language') }}</span>
+            </div>
+            <a-select
+              :model-value="store.settings.locale"
+              style="width: 170px"
+              size="small"
+              @change="onLocaleChange"
+            >
+              <a-option v-for="l in SUPPORTED_LOCALES" :key="l.value" :value="l.value">
+                {{ l.label }}
+              </a-option>
+            </a-select>
+          </div>
+
+          <div class="apple-inset-row">
+            <div class="row-info">
+              <span class="row-title">{{ t('settings.theme.label') }}</span>
+            </div>
+            <a-select
+              :model-value="store.settings.theme"
+              style="width: 170px"
+              size="small"
+              @change="onThemeChange"
+            >
+              <a-option v-for="o in THEME_OPTIONS" :key="o.value" :value="o.value">
+                {{ o.label }}
+              </a-option>
+            </a-select>
+          </div>
+
+          <div class="apple-inset-row">
+            <div class="row-info">
+              <span class="row-title">{{ t('settings.minimizeToTray') }}</span>
+            </div>
+            <a-switch :model-value="store.settings.minimize_to_tray" size="small" @change="onTrayChange" />
+          </div>
+
+          <div class="apple-inset-row">
+            <div class="row-info">
+              <span class="row-title">{{ t('settings.autostart') }}</span>
+            </div>
+            <a-switch :model-value="store.settings.autostart" size="small" @change="onAutostartChange" />
+          </div>
+
+          <div class="apple-inset-row">
+            <div class="row-info">
+              <span class="row-title">{{ t('settings.logLevel.label') }}</span>
+              <span class="row-desc">{{ t('settings.logLevel.hint') }}</span>
+            </div>
+            <a-select
+              :model-value="store.settings.log_level"
+              style="width: 170px"
+              size="small"
+              @change="onLogLevelChange"
+            >
+              <a-option v-for="o in LOG_LEVEL_OPTIONS" :key="o.value" :value="o.value">
+                {{ o.label }}
+              </a-option>
+            </a-select>
+          </div>
+
+          <div class="apple-inset-row">
+            <div class="row-info">
+              <span class="row-title">{{ t('settings.terminal.label') }}</span>
+              <span class="row-desc">{{ t('settings.terminal.hint') }}</span>
+            </div>
+            <a-select
+              :model-value="store.settings.terminal"
+              style="width: 170px"
+              size="small"
+              @change="onTerminalChange"
+            >
+              <a-option v-for="o in TERMINAL_OPTIONS" :key="o.value" :value="o.value">
+                {{ o.label }}
+              </a-option>
+            </a-select>
+          </div>
         </div>
       </div>
-      <p class="settings-hint">{{ t('settings.shortcuts.note') }}</p>
-    </div>
 
-    <div :ref="(el: unknown) => setSectionRef('proxy', el)" class="dl-card section-anchor">
-      <div class="dl-card-title">
-        <h3>{{ t('settings.proxy.title') }}</h3>
-      </div>
-      <a-form :model="store.settings" layout="vertical" class="settings-form">
-        <a-form-item>
-          <a-switch :model-value="store.settings.proxy_enabled" @change="onProxyEnabledChange" />
-          <span class="switch-label">{{ t('settings.proxy.enabled') }}</span>
-          <p class="settings-hint">{{ t('settings.proxy.enabledHint') }}</p>
-        </a-form-item>
-        <a-form-item :label="t('settings.proxy.url')">
-          <a-input
-            v-model="proxyUrl"
-            :disabled="!store.settings.proxy_enabled"
-            placeholder="http://127.0.0.1"
-            @blur="onProxyFieldsSave"
-            @press-enter="onProxyFieldsSave"
-          />
-        </a-form-item>
-        <a-form-item :label="t('settings.proxy.port')">
-          <a-input-number
-            v-model="proxyPort"
-            :disabled="!store.settings.proxy_enabled"
-            :min="1"
-            :max="65535"
-            style="width: 220px"
-            @blur="onProxyFieldsSave"
-          />
-        </a-form-item>
-        <a-form-item :label="t('settings.proxy.noProxy')">
-          <a-input
-            v-model="noProxy"
-            :disabled="!store.settings.proxy_enabled"
-            placeholder="127.0.0.1,localhost,::1"
-            @blur="onProxyFieldsSave"
-            @press-enter="onProxyFieldsSave"
-          />
-          <p class="settings-hint">{{ t('settings.proxy.noProxyHint') }}</p>
-        </a-form-item>
-        <a-form-item>
-          <a-switch
-            :model-value="store.settings.proxy_apply_dsh"
-            :disabled="!store.settings.proxy_enabled"
-            @change="onProxyApplyDshChange"
-          />
-          <span class="switch-label">{{ t('settings.proxy.applyDsh') }}</span>
-          <p class="settings-hint">{{ t('settings.proxy.applyDshHint') }}</p>
-        </a-form-item>
-      </a-form>
-    </div>
+      <!-- Shortcuts Section -->
+      <div :ref="(el: unknown) => setSectionRef('shortcuts', el)" class="settings-section">
+        <div class="section-title">
+          <h3>{{ t('settings.shortcuts.title') }}</h3>
+          <p class="section-sub">{{ t('settings.shortcuts.desc') }}</p>
+        </div>
 
-    <div :ref="(el: unknown) => setSectionRef('update', el)" class="dl-card section-anchor">
-      <div class="dl-card-title">
-        <h3>{{ t('settings.update.title') }}</h3>
+        <div class="apple-inset-group">
+          <div v-for="row in shortcutRows" :key="row.label" class="apple-inset-row">
+            <div class="row-info">
+              <span class="row-title">
+                {{ row.label }}
+                <span v-if="row.native" class="native-tag-chip">{{ t('settings.shortcuts.nativeTag') }}</span>
+              </span>
+            </div>
+            <div class="shortcut-keys-wrap">
+              <span v-for="k in row.keys" :key="k" class="apple-kbd tnum">{{ k }}</span>
+            </div>
+          </div>
+        </div>
+        <p class="section-footnote">{{ t('settings.shortcuts.note') }}</p>
       </div>
-      <div class="update-row">
-        <span class="update-current">v{{ launcherVersion }}</span>
-        <a-tag v-if="updateInfo?.channel === 'dev' || launcherVersion.includes('-dev.')" color="orange" size="small">
-          {{ t('settings.update.devChannel') }}
-        </a-tag>
-        <a-select
-          :model-value="updateChannel"
-          class="update-channel-select"
-          size="small"
-          @change="onUpdateChannelChange"
-        >
-          <a-option v-for="o in UPDATE_CHANNEL_OPTIONS" :key="o.value" :value="o.value">
-            {{ o.label }}
-          </a-option>
-        </a-select>
-        <a-button size="small" :loading="checkingUpdate" @click="onCheckUpdate">
-          {{ t('settings.update.check') }}
-        </a-button>
-      </div>
-      <p class="settings-hint">{{ t('settings.update.channelHint') }}</p>
-      <div v-if="updateInfo && !updateInfo.up_to_date" class="update-result">
-        <a-alert type="info" :show-icon="true">
-          {{ t('settings.update.available', { version: updateInfo.latest }) }}
-          <template v-if="updateInfo.url">
-            <a-link class="update-link" @click="api.openExternal(updateInfo.url!)">
-              {{ t('settings.update.viewRelease') }}
-            </a-link>
-          </template>
-        </a-alert>
-      </div>
-      <div v-else-if="updateInfo?.up_to_date" class="update-result">
-        <span class="update-up-to-date">{{ t('settings.update.upToDate') }}</span>
-      </div>
-    </div>
 
-    <div :ref="(el: unknown) => setSectionRef('dataDir', el)" class="dl-card section-anchor">
-      <div class="dl-card-title">
-        <h3>{{ t('settings.dataDir.title') }}</h3>
+      <!-- Proxy Section -->
+      <div :ref="(el: unknown) => setSectionRef('proxy', el)" class="settings-section">
+        <div class="section-title">
+          <h3>{{ t('settings.proxy.title') }}</h3>
+        </div>
+
+        <div class="apple-inset-group">
+          <div class="apple-inset-row">
+            <div class="row-info">
+              <span class="row-title">{{ t('settings.proxy.enabled') }}</span>
+              <span class="row-desc">{{ t('settings.proxy.enabledHint') }}</span>
+            </div>
+            <a-switch :model-value="store.settings.proxy_enabled" size="small" @change="onProxyEnabledChange" />
+          </div>
+
+          <div class="apple-inset-row">
+            <div class="row-info">
+              <span class="row-title">{{ t('settings.proxy.url') }}</span>
+            </div>
+            <input
+              v-model="proxyUrl"
+              class="apple-input-sm"
+              :disabled="!store.settings.proxy_enabled"
+              placeholder="http://127.0.0.1"
+              style="width: 220px"
+              @blur="onProxyFieldsSave"
+              @press-enter="onProxyFieldsSave"
+            />
+          </div>
+
+          <div class="apple-inset-row">
+            <div class="row-info">
+              <span class="row-title">{{ t('settings.proxy.port') }}</span>
+            </div>
+            <input
+              v-model="proxyPort"
+              type="number"
+              class="apple-input-sm"
+              :disabled="!store.settings.proxy_enabled"
+              min="1"
+              max="65535"
+              style="width: 110px"
+              @blur="onProxyFieldsSave"
+              @press-enter="onProxyFieldsSave"
+            />
+          </div>
+
+          <div class="apple-inset-row">
+            <div class="row-info">
+              <span class="row-title">{{ t('settings.proxy.noProxy') }}</span>
+              <span class="row-desc">{{ t('settings.proxy.noProxyHint') }}</span>
+            </div>
+            <input
+              v-model="noProxy"
+              class="apple-input-sm"
+              :disabled="!store.settings.proxy_enabled"
+              placeholder="127.0.0.1,localhost,::1"
+              style="width: 220px"
+              @blur="onProxyFieldsSave"
+              @press-enter="onProxyFieldsSave"
+            />
+          </div>
+
+          <div class="apple-inset-row">
+            <div class="row-info">
+              <span class="row-title">{{ t('settings.proxy.applyDsh') }}</span>
+              <span class="row-desc">{{ t('settings.proxy.applyDshHint') }}</span>
+            </div>
+            <a-switch
+              :model-value="store.settings.proxy_apply_dsh"
+              :disabled="!store.settings.proxy_enabled"
+              size="small"
+              @change="onProxyApplyDshChange"
+            />
+          </div>
+        </div>
       </div>
-      <p class="settings-hint">{{ t('settings.dataDir.hint') }}</p>
-      <div class="update-row">
-        <span class="data-dir-path" :title="dataDir">{{ dataDir || t('settings.dataDir.unknown') }}</span>
-        <a-button size="small" @click="onOpenDataDir">{{ t('settings.dataDir.open') }}</a-button>
-        <a-button size="small" @click="onOpenLauncherLog">{{ t('settings.dataDir.viewLog') }}</a-button>
+
+      <!-- Update Section -->
+      <div :ref="(el: unknown) => setSectionRef('update', el)" class="settings-section">
+        <div class="section-title">
+          <h3>{{ t('settings.update.title') }}</h3>
+        </div>
+
+        <div class="apple-inset-group">
+          <div class="apple-inset-row">
+            <div class="row-info">
+              <span class="row-title">
+                DSH Launcher
+                <span class="version-pill-badge tnum">v{{ launcherVersion }}</span>
+              </span>
+              <span class="row-desc">{{ t('settings.update.channelHint') }}</span>
+            </div>
+            <div class="update-controls">
+              <a-select
+                :model-value="updateChannel"
+                style="width: 140px"
+                size="small"
+                @change="onUpdateChannelChange"
+              >
+                <a-option v-for="o in UPDATE_CHANNEL_OPTIONS" :key="o.value" :value="o.value">
+                  {{ o.label }}
+                </a-option>
+              </a-select>
+              <button class="mac-primary-btn" :disabled="checkingUpdate" @click="onCheckUpdate">
+                {{ t('settings.update.check') }}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div v-if="updateInfo && !updateInfo.up_to_date" class="update-alert-card">
+          <span class="update-msg">{{ t('settings.update.available', { version: updateInfo.latest }) }}</span>
+          <button v-if="updateInfo.url" class="mac-secondary-btn" @click="api.openExternal(updateInfo.url!)">
+            {{ t('settings.update.viewRelease') }}
+          </button>
+        </div>
       </div>
-    </div>
+
+      <!-- Data Directory Section -->
+      <div :ref="(el: unknown) => setSectionRef('dataDir', el)" class="settings-section">
+        <div class="section-title">
+          <h3>{{ t('settings.dataDir.title') }}</h3>
+          <p class="section-sub">{{ t('settings.dataDir.desc') }}</p>
+        </div>
+
+        <div class="apple-inset-group">
+          <div class="apple-inset-row">
+            <div class="row-info">
+              <span class="row-title">{{ t('settings.dataDir.pathLabel') }}</span>
+              <span class="row-desc tnum">{{ dataDir || '—' }}</span>
+            </div>
+            <div class="dir-actions">
+              <button class="mac-secondary-btn" @click="onOpenDataDir">
+                {{ t('settings.dataDir.open') }}
+              </button>
+              <button class="mac-secondary-btn" @click="onOpenLauncherLog">
+                {{ t('settings.viewLog') }}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -396,153 +461,231 @@ function scrollToSection(key: string) {
 <style lang="scss" scoped>
 .settings-layout {
   display: flex;
-  align-items: flex-start;
-  gap: 16px;
-  max-width: calc(var(--dl-content-max) + 180px);
-  margin: 0 auto;
-  padding: 0 24px 0 0;
+  min-height: 100%;
 }
 
-.settings-anchor {
-  position: sticky;
-  top: 20px;
-  width: 148px;
+// Left Subnav
+.settings-subnav {
+  width: 160px;
   flex-shrink: 0;
+  padding: 24px 12px;
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding: 20px 0 20px 24px;
+  gap: 3px;
+  position: sticky;
+  top: 0;
+  height: calc(100vh - var(--dl-header-height));
+  border-right: 1px solid var(--apple-separator);
 }
 
-.anchor-item {
-  text-align: left;
+.subnav-item {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  padding: 7px 12px;
   border: none;
+  border-radius: 7px;
   background: transparent;
   color: var(--color-text-2);
   font-size: 13px;
-  padding: 7px 10px;
-  border-radius: 6px;
+  font-weight: 500;
   cursor: pointer;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  text-align: left;
+  transition: all 0.15s ease;
 
   &:hover {
-    background: var(--color-fill-2);
+    background: var(--apple-group-bg);
+    color: var(--color-text-1);
+  }
+
+  &.active {
+    background: rgb(var(--primary-6) / 14%);
     color: rgb(var(--primary-6));
+    font-weight: 600;
+  }
+
+  &:active {
+    transform: scale(var(--apple-active-scale));
   }
 }
 
-.settings-page {
+// Right Content
+.settings-content-area {
   flex: 1;
   min-width: 0;
-  margin: 0;
-  padding-left: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
 }
 
-.section-anchor {
-  scroll-margin-top: 12px;
-}
-.settings-form {
-  max-width: 560px;
+.settings-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
-.switch-label {
-  margin-left: 10px;
+.section-title {
+  h3 {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--color-text-1);
+    letter-spacing: -0.01em;
+  }
+
+  .section-sub {
+    margin: 3px 0 0;
+    font-size: 12.5px;
+    color: var(--color-text-3);
+  }
+}
+
+.section-footnote {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--color-text-4);
+}
+
+.native-tag-chip {
+  margin-left: 6px;
+  padding: 1px 6px;
+  font-size: 11px;
+  border-radius: 5px;
+  background: var(--apple-group-bg);
+  color: var(--color-text-3);
+  font-weight: normal;
+}
+
+.shortcut-keys-wrap {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.apple-kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  font-size: 11.5px;
+  font-weight: 600;
+  border-radius: 5px;
+  background: var(--apple-group-bg);
+  border: 1px solid var(--apple-card-border);
+  color: var(--color-text-1);
+  box-shadow: 0 1px 1px rgba(0, 0, 0, 0.05);
+}
+
+.apple-input-sm {
+  height: 30px;
+  padding: 0 10px;
+  font-size: 13px;
+  border-radius: 7px;
+  border: 1px solid var(--apple-card-border);
+  background: var(--apple-group-bg);
+  color: var(--color-text-1);
+  outline: none;
+  transition: all 0.16s ease;
+
+  &:focus {
+    background: var(--apple-card-bg);
+    border-color: rgb(var(--primary-6));
+    box-shadow: 0 0 0 2px rgb(var(--primary-6) / 18%);
+  }
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+}
+
+.mac-primary-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 12px;
+  font-size: 12.5px;
+  font-weight: 500;
+  border-radius: 7px;
+  border: none;
+  background: rgb(var(--primary-6));
+  color: #fff;
+  cursor: pointer;
+  transition: all 0.16s ease;
+
+  &:hover:not(:disabled) {
+    filter: brightness(1.06);
+  }
+
+  &:active:not(:disabled) {
+    transform: scale(var(--apple-active-scale));
+  }
+}
+
+.mac-secondary-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  font-size: 12.5px;
+  font-weight: 500;
+  border-radius: 7px;
+  border: 1px solid var(--apple-card-border);
+  background: var(--apple-card-bg);
+  color: var(--color-text-2);
+  cursor: pointer;
+  transition: all 0.16s ease;
+
+  &:hover {
+    background: var(--apple-group-bg);
+    color: var(--color-text-1);
+  }
+
+  &:active {
+    transform: scale(var(--apple-active-scale));
+  }
+}
+
+.version-pill-badge {
+  margin-left: 6px;
+  padding: 1px 7px;
+  font-size: 11.5px;
+  font-weight: 600;
+  border-radius: 6px;
+  background: var(--apple-group-bg);
   color: var(--color-text-2);
 }
 
-.settings-hint {
-  margin: 6px 0 0;
-  font-size: 12px;
-  color: var(--color-text-3);
-}
-
-.update-row {
+.update-controls {
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin-bottom: 8px;
+  gap: 8px;
 }
 
-.update-channel-select {
-  width: 140px;
-}
-
-.data-dir-path {
-  flex: 1;
-  min-width: 0;
-  font-size: 12px;
-  color: var(--color-text-3);
-  font-family: monospace;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.update-current {
-  font-weight: 600;
-}
-
-.update-result {
-  margin-top: 8px;
-}
-
-.update-link {
-  margin-left: 8px;
-}
-
-.update-up-to-date {
-  color: var(--color-text-3);
-  font-size: 13px;
-}
-
-.shortcut-list {
-  display: flex;
-  flex-direction: column;
-  max-width: 560px;
-  margin: 12px 0;
-  border: 1px solid var(--color-border-2);
-  border-radius: 8px;
-  overflow: hidden;
-}
-
-.shortcut-row {
+.update-alert-card {
+  margin-top: 10px;
+  padding: 10px 14px;
+  border-radius: 9px;
+  background: rgb(var(--primary-6) / 10%);
+  border: 1px solid rgb(var(--primary-6) / 20%);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 8px 12px;
 
-  &:not(:last-child) {
-    border-bottom: 1px solid var(--color-border-2);
+  .update-msg {
+    font-size: 13px;
+    color: rgb(var(--primary-6));
+    font-weight: 500;
   }
 }
 
-.shortcut-label {
-  font-size: 13px;
-  color: var(--color-text-1);
-}
-
-.shortcut-native {
-  margin-left: 8px;
-}
-
-.shortcut-keys {
+.dir-actions {
   display: flex;
-  gap: 4px;
-  flex-shrink: 0;
-}
-
-.shortcut-kbd {
-  padding: 2px 8px;
-  font-size: 12px;
-  font-family: inherit;
-  color: var(--color-text-2);
-  background: var(--color-fill-2);
-  border: 1px solid var(--color-border-2);
-  border-bottom-width: 2px;
-  border-radius: 6px;
-  white-space: nowrap;
+  align-items: center;
+  gap: 6px;
 }
 </style>

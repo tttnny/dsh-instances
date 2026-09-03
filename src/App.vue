@@ -41,11 +41,8 @@ function onSystemThemeChange() {
 onMounted(async () => {
   await store.init()
   locale.value = store.settings.locale || 'zh-CN'
-  // Apply the persisted theme early (before init resolves the settings may
-  // still be defaults; the watch below re-applies on any change).
   applyTheme(store.settings.theme || 'system')
   themeMedia.addEventListener('change', onSystemThemeChange)
-  // If Node.js is missing, guide the user to install it before anything else.
   if (!store.runtime?.node?.installed && route.name !== 'setup') {
     router.push({ name: 'setup' })
   }
@@ -54,7 +51,7 @@ onMounted(async () => {
   await setupMenuListeners()
 })
 
-// --- In-app shortcuts (t4/t9): Cmd/Ctrl+1/2/3/4, Cmd+, K/R, Esc --------------
+// --- In-app shortcuts: Cmd/Ctrl+1/2/3/4, Cmd+, K/R, Esc -----------------------
 
 function goShortcut(name: ShortcutRoute) {
   if (name === 'instances' && route.name === 'instance-edit') return
@@ -79,7 +76,7 @@ function onAppKeydown(e: KeyboardEvent) {
 
 let unlistenMenu: (() => void)[] = []
 
-/** Backend menu events (t3 Rust menu) drive the same routes as the shortcuts. */
+/** Backend menu events (Rust menu) drive the same routes as shortcuts. */
 async function setupMenuListeners() {
   if (!isTauri) return
   try {
@@ -95,8 +92,6 @@ async function setupMenuListeners() {
       const un = await listen(name, () => refreshShortcut())
       unlistenMenu.push(un)
     }
-    // H3: Help-menu actions have no route target — handle them here instead
-    // of leaving the clicks dead. Same semantics as the tray counterpart.
     unlistenMenu.push(await listen('check-update', () => void onMenuCheckUpdate()))
     unlistenMenu.push(await listen('open-help', () => void onMenuOpenHelp()))
   } catch {
@@ -106,12 +101,6 @@ async function setupMenuListeners() {
 
 let checkingMenuUpdate = false
 
-/**
- * Native menu → 检查更新 (H3 fix): same semantics as the tray counterpart
- * (`check_update_from_tray`) — open the release page when an update exists,
- * otherwise toast up-to-date. Failures surface as an error toast so the
- * click never looks dead.
- */
 async function onMenuCheckUpdate() {
   if (checkingMenuUpdate) return
   checkingMenuUpdate = true
@@ -130,7 +119,6 @@ async function onMenuCheckUpdate() {
   }
 }
 
-/** Native menu → 使用文档 (H3 fix): open the project README in the browser. */
 async function onMenuOpenHelp() {
   try {
     await api.openExternal('https://github.com/dsh-plugins/dsh-launcher')
@@ -145,15 +133,12 @@ let unlistenDeepLink: (() => void) | undefined
 
 async function setupLaunchDeepLink() {
   if (!isTauri) return
-  // Cold start via protocol: the deep link arrived in argv before the
-  // webview could listen; pull it now.
   const pending = await api.pendingDeepLink()
   if (pending) handleDeepLink(pending)
   const { listen } = await import('@tauri-apps/api/event')
   unlistenDeepLink = await listen<string>('deep-link', (event) => handleDeepLink(event.payload))
 }
 
-/** dsh-launcher://launch → start instance. */
 function handleDeepLink(raw: string) {
   try {
     const u = new URL(raw)
@@ -162,11 +147,10 @@ function handleDeepLink(raw: string) {
       void launchFromDeepLink(u)
     }
   } catch {
-    // Not a URL we understand; ignore.
+    // Ignore invalid protocol
   }
 }
 
-/** dsh-launcher://launch?instance=<name|id>&profile=<name> (issue #9). */
 async function launchFromDeepLink(u: URL) {
   const ref = u.searchParams.get('instance')
   if (!ref) return
@@ -181,15 +165,12 @@ async function launchFromDeepLink(u: URL) {
       const profile = u.searchParams.get('profile') || inst.default_profile || 'web'
       await api.startInstance(inst.id, profile)
     }
-    // start_instance returns right after spawn; the web URL (and the
-    // open-in-browser readiness check) only exist once the instance is running.
     await openBrowserWhenReady(inst.id)
   } catch (e) {
     Message.error(String(e))
   }
 }
 
-/** Waits for the instance to report `running` with a URL, then opens it in the system browser. */
 async function openBrowserWhenReady(id: string) {
   const deadline = Date.now() + 120_000
   for (;;) {
@@ -199,7 +180,6 @@ async function openBrowserWhenReady(id: string) {
       return
     }
     if (st.state === 'exited' || Date.now() > deadline) {
-      // Last attempt: surface the backend's own error if it is not ready.
       await api.openInstanceWindow(id)
       return
     }
@@ -240,11 +220,10 @@ function toggleSider() {
   try {
     localStorage.setItem('dsh-launcher.siderCollapsed', siderCollapsed.value ? '1' : '0')
   } catch {
-    // Private mode etc: collapse state is best-effort.
+    // Private mode fallback
   }
 }
 
-/** Maps every route onto one highlighted sidebar entry. */
 const navSelected = computed<NavKey>(() => {
   const name = route.name as string
   if (name === 'instances' || name === 'instance-edit') return 'instances'
@@ -261,11 +240,7 @@ function navGo(key: NavKey) {
       void router.push({ name: 'home' }).catch(() => undefined)
       break
     case 'instances':
-      if (route.name !== 'instances' && route.name !== 'instance-edit') {
-        void router.push({ name: 'instances' }).catch(() => undefined)
-      } else if (route.name !== 'instances') {
-        void router.push({ name: 'instances' }).catch(() => undefined)
-      }
+      void router.push({ name: 'instances' }).catch(() => undefined)
       break
     case 'homes':
       void router.push({ name: 'homes' }).catch(() => undefined)
@@ -286,7 +261,6 @@ const runningInstanceCount = computed(
   () => store.instances.filter((i) => store.statusOf(i.id).state === 'running').length,
 )
 
-/** Slim header title for the current route. */
 const pageTitle = computed(() => {
   const name = route.name as string
   switch (name) {
@@ -311,7 +285,6 @@ const pageTitle = computed(() => {
   }
 })
 
-/** Detail pages get an explicit back affordance next to the title. */
 const showBack = computed(() => {
   const name = route.name as string
   return name === 'instance-edit'
@@ -331,8 +304,6 @@ async function loadWindowApi() {
   return getCurrentWindow()
 }
 
-// Manual drag: native data-tauri-drag-region only works on elements carrying
-// the attribute, which leaves gaps undraggable.
 async function onHeaderMouseDown(e: MouseEvent) {
   if (!isTauri || e.button !== 0) return
   const el = e.target as HTMLElement | null
@@ -343,19 +314,29 @@ async function onHeaderMouseDown(e: MouseEvent) {
 </script>
 
 <template>
-  <a-layout class="app-shell">
-    <!-- Tauri Overlay 模式下红绿灯悬浮在左上角：单独留一条拖拽栏，
-         下方整排内容整体下移，不再跟红绿灯挤在同一行。 -->
-    <div v-if="isTauri" class="traffic-bar" @mousedown="onHeaderMouseDown" />
-    <div class="app-body">
-    <aside class="app-sider" :class="{ collapsed: siderCollapsed }">
-      <div class="sider-brand" @mousedown="onHeaderMouseDown">
-        <span v-if="!siderCollapsed" class="sider-title">{{ t('app.title') }}</span>
-        <button class="sider-collapse" :title="t('nav.toggleSider')" @click="toggleSider">
-          {{ siderCollapsed ? '»' : '«' }}
+  <div class="apple-window">
+    <!-- Unified Sidebar: spans full vertical height -->
+    <aside class="apple-sider" :class="{ collapsed: siderCollapsed }">
+      <!-- Traffic Light Area in Sidebar Header -->
+      <div class="sider-traffic-header" @mousedown="onHeaderMouseDown">
+        <div v-if="!siderCollapsed" class="sider-brand">
+          <div class="sider-app-dot" />
+          <span class="sider-title">{{ t('app.title') }}</span>
+        </div>
+        <button
+          class="sider-toggle-btn"
+          :title="t('nav.toggleSider')"
+          data-no-drag
+          @click="toggleSider"
+        >
+          <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
+            <rect x="2" y="2.5" width="12" height="11" rx="2.5" />
+            <line x1="6" y1="2.5" x2="6" y2="13.5" />
+          </svg>
         </button>
       </div>
 
+      <!-- Navigation List -->
       <nav class="sider-nav">
         <button
           class="nav-item"
@@ -363,20 +344,32 @@ async function onHeaderMouseDown(e: MouseEvent) {
           :title="siderCollapsed ? t('nav.home') : ''"
           @click="navGo('home')"
         >
-          <span class="nav-icon">▶</span>
+          <span class="nav-icon">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polygon points="5 3 19 12 5 21 5 3" />
+            </svg>
+          </span>
           <span v-if="!siderCollapsed" class="nav-label">{{ t('nav.home') }}</span>
         </button>
+
         <button
           class="nav-item"
           :class="{ active: navSelected === 'instances' }"
           :title="siderCollapsed ? t('nav.instances') : ''"
           @click="navGo('instances')"
         >
-          <span class="nav-icon">🗂</span>
+          <span class="nav-icon">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="3" width="7" height="7" rx="1.5" />
+              <rect x="14" y="3" width="7" height="7" rx="1.5" />
+              <rect x="14" y="14" width="7" height="7" rx="1.5" />
+              <rect x="3" y="14" width="7" height="7" rx="1.5" />
+            </svg>
+          </span>
           <span v-if="!siderCollapsed" class="nav-label">{{ t('nav.instances') }}</span>
-          <a-tag v-if="!siderCollapsed && runningInstanceCount > 0" size="small" color="green">
+          <span v-if="!siderCollapsed && runningInstanceCount > 0" class="nav-pill-badge">
             {{ runningInstanceCount }}
-          </a-tag>
+          </span>
         </button>
 
         <button
@@ -385,16 +378,29 @@ async function onHeaderMouseDown(e: MouseEvent) {
           :title="siderCollapsed ? t('nav.homes') : ''"
           @click="navGo('homes')"
         >
-          <span class="nav-icon">🏠</span>
+          <span class="nav-icon">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+              <polyline points="9 22 9 12 15 12 15 22" />
+            </svg>
+          </span>
           <span v-if="!siderCollapsed" class="nav-label">{{ t('nav.homes') }}</span>
         </button>
+
         <button
           class="nav-item"
           :class="{ active: navSelected === 'versions' }"
           :title="siderCollapsed ? t('nav.versions') : ''"
           @click="navGo('versions')"
         >
-          <span class="nav-icon">📦</span>
+          <span class="nav-icon">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="16.5" y1="9.4" x2="7.5" y2="4.21" />
+              <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+              <polyline points="3.27 6.96 12 12.01 20.73 6.96" />
+              <line x1="12" y1="22.08" x2="12" y2="12" />
+            </svg>
+          </span>
           <span v-if="!siderCollapsed" class="nav-label">{{ t('nav.versions') }}</span>
         </button>
 
@@ -404,49 +410,78 @@ async function onHeaderMouseDown(e: MouseEvent) {
           :title="siderCollapsed ? t('nav.tasks') : ''"
           @click="navGo('tasks')"
         >
-          <span class="nav-icon">⏱</span>
+          <span class="nav-icon">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10" />
+              <polyline points="12 6 12 12 16 14" />
+            </svg>
+          </span>
           <span v-if="!siderCollapsed" class="nav-label">{{ t('nav.tasks') }}</span>
-          <a-badge
-            v-if="!siderCollapsed && store.runningTaskCount > 0"
-            :count="store.runningTaskCount"
-          />
-          <span v-if="siderCollapsed && store.runningTaskCount > 0" class="nav-dot" />
+          <span v-if="!siderCollapsed && store.runningTaskCount > 0" class="nav-pill-badge active-task">
+            {{ store.runningTaskCount }}
+          </span>
+          <span v-if="siderCollapsed && store.runningTaskCount > 0" class="nav-dot-active" />
         </button>
+
         <button
           class="nav-item"
           :class="{ active: navSelected === 'settings' }"
           :title="siderCollapsed ? t('nav.settings') : ''"
           @click="navGo('settings')"
         >
-          <span class="nav-icon">⚙</span>
+          <span class="nav-icon">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="3" />
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
+            </svg>
+          </span>
           <span v-if="!siderCollapsed" class="nav-label">{{ t('nav.settings') }}</span>
         </button>
       </nav>
 
+      <!-- Sidebar Footer (Status Hint) -->
       <div v-if="!siderCollapsed" class="sider-footer">
-        <span v-if="store.runningTaskCount > 0" class="sider-task-hint">
-          {{ t('tasks.runningHint', { count: store.runningTaskCount }) }}
-        </span>
-        <span v-else class="sider-task-idle">{{ t('tasks.idleHint') }}</span>
+        <div class="sider-status-row">
+          <span :class="['apple-status-dot', store.runningTaskCount > 0 ? 'starting' : 'idle']">
+            {{ store.runningTaskCount > 0 ? t('tasks.runningHint', { count: store.runningTaskCount }) : t('tasks.idleHint') }}
+          </span>
+        </div>
       </div>
     </aside>
 
-    <a-layout class="app-main">
-      <a-layout-header class="app-header" @mousedown="onHeaderMouseDown">
-        <button v-if="showBack" class="header-back-btn" @click="onHeaderBack">←</button>
-        <span class="header-title">{{ pageTitle }}</span>
-        <a-tag v-if="!isTauri" size="small" color="orange">{{ t('app.mockBadge') }}</a-tag>
-        <span class="header-spacer" />
-        <button
-          class="header-refresh"
-          :title="t('common.refresh')"
-          data-no-drag
-          @click="refreshShortcut"
-        >
-          ⟳
-        </button>
-      </a-layout-header>
-      <a-layout-content class="app-content">
+    <!-- Main Window Area -->
+    <main class="apple-main">
+      <!-- Unified Header Toolbar -->
+      <header class="apple-header" @mousedown="onHeaderMouseDown">
+        <div class="header-left">
+          <button v-if="showBack" class="header-mac-btn" :title="t('common.back')" data-no-drag @click="onHeaderBack">
+            <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M10 13L5 8l5-5" />
+            </svg>
+          </button>
+          <span class="header-title">{{ pageTitle }}</span>
+          <span v-if="!isTauri" class="header-mock-chip">{{ t('app.mockBadge') }}</span>
+        </div>
+
+        <div class="header-spacer" />
+
+        <div class="header-actions">
+          <button
+            class="header-mac-btn"
+            :title="t('common.refresh')"
+            data-no-drag
+            @click="refreshShortcut"
+          >
+            <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M13.5 8A5.5 5.5 0 1 1 12 4.1L14 2" />
+              <polyline points="14 5.5 14 2 10.5 2" />
+            </svg>
+          </button>
+        </div>
+      </header>
+
+      <!-- Content Scroll Container -->
+      <div class="apple-content">
         <a-scrollbar
           type="track"
           outer-style="height: 100%"
@@ -454,48 +489,38 @@ async function onHeaderMouseDown(e: MouseEvent) {
         >
           <router-view />
         </a-scrollbar>
-      </a-layout-content>
-    </a-layout>
-    </div>
-
-  </a-layout>
+      </div>
+    </main>
+  </div>
 </template>
 
 <style lang="scss" scoped>
-.app-shell {
+.apple-window {
   height: 100%;
-  display: flex;
-  flex-direction: column;
-}
-
-// Tauri Overlay 红绿灯独占条：高度盖住悬浮的红绿灯（约 28px 外加
-// 上下呼吸空间），整块可拖拽移动窗口。
-.traffic-bar {
-  height: 38px;
-  flex-shrink: 0;
-  -webkit-app-region: drag;
-}
-
-.app-body {
-  flex: 1;
-  min-height: 0;
+  width: 100%;
   display: flex;
   flex-direction: row;
+  overflow: hidden;
+  background-color: var(--apple-content-bg);
 }
 
-.app-sider {
+// Unified Sidebar
+.apple-sider {
   width: var(--dl-sider-width);
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  background: var(--color-bg-2);
-  border-right: 1px solid var(--color-border-2);
-  transition: width 0.15s ease;
+  background: var(--apple-sidebar-bg);
+  backdrop-filter: blur(28px) saturate(180%);
+  -webkit-backdrop-filter: blur(28px) saturate(180%);
+  border-right: 1px solid var(--apple-sidebar-border);
+  transition: width var(--apple-duration) var(--apple-spring-curve);
+  z-index: 10;
 
   &.collapsed {
     width: var(--dl-sider-collapsed-width);
 
-    .sider-brand {
+    .sider-traffic-header {
       justify-content: center;
       padding: 0 8px;
     }
@@ -507,90 +532,129 @@ async function onHeaderMouseDown(e: MouseEvent) {
   }
 }
 
+// Window Traffic Area & Brand in Sidebar
+.sider-traffic-header {
+  height: var(--dl-header-height);
+  padding: 0 14px 0 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  -webkit-app-region: drag;
+  user-select: none;
+}
+
 .sider-brand {
   display: flex;
   align-items: center;
   gap: 8px;
-  height: var(--dl-header-height);
-  padding: 0 12px;
-  border-bottom: 1px solid var(--color-border-2);
-  flex-shrink: 0;
-  white-space: nowrap;
-  overflow: hidden;
-  // Draggable so the window can be moved from the brand area too.
-  -webkit-app-region: drag;
+  min-width: 0;
+  flex: 1;
+}
 
-  button {
-    -webkit-app-region: no-drag;
-  }
+.sider-app-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, rgb(var(--primary-6)), #722ed1);
+  box-shadow: 0 0 8px rgb(var(--primary-6) / 40%);
+  flex-shrink: 0;
 }
 
 .sider-title {
-  font-size: 14px;
-  font-weight: 700;
-  flex: 1;
-  min-width: 0;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--color-text-1);
+  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.sider-collapse {
+.sider-toggle-btn {
   border: none;
   background: transparent;
   color: var(--color-text-3);
   cursor: pointer;
   border-radius: 6px;
-  padding: 2px 6px;
-  font-size: 13px;
+  padding: 5px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.16s ease;
 
   &:hover {
-    background: var(--color-fill-2);
-    color: rgb(var(--primary-6));
+    background: var(--apple-group-bg);
+    color: var(--color-text-1);
+  }
+
+  &:active {
+    transform: scale(var(--apple-active-scale));
   }
 }
 
+// Sidebar Navigation
 .sider-nav {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 10px 8px;
+  padding: 8px 10px;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 3px;
 }
 
 .nav-item {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 11px;
   width: 100%;
-  padding: 9px 10px;
+  padding: 8px 12px;
   border: none;
   border-radius: 8px;
   background: transparent;
   color: var(--color-text-2);
   font-size: 13px;
+  font-weight: 500;
   cursor: pointer;
   text-align: left;
   position: relative;
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease,
+    transform 0.12s ease-out;
 
   &:hover {
-    background: var(--color-fill-2);
+    background: var(--apple-group-bg);
     color: var(--color-text-1);
   }
 
   &.active {
-    background: rgb(var(--primary-6) / 10%);
+    background: rgb(var(--primary-6) / 14%);
     color: rgb(var(--primary-6));
     font-weight: 600;
+
+    .nav-icon svg {
+      stroke: rgb(var(--primary-6));
+    }
+  }
+
+  &:active {
+    transform: scale(var(--apple-active-scale));
   }
 }
 
 .nav-icon {
   width: 20px;
-  text-align: center;
-  font-size: 15px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   flex-shrink: 0;
+
+  svg {
+    stroke: currentColor;
+    transition: stroke 0.15s ease;
+  }
 }
 
 .nav-label {
@@ -601,98 +665,127 @@ async function onHeaderMouseDown(e: MouseEvent) {
   white-space: nowrap;
 }
 
-.nav-dot {
-  position: absolute;
-  top: 6px;
-  right: 6px;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: rgb(var(--primary-6));
-}
+.nav-pill-badge {
+  padding: 1px 7px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 10px;
+  background: rgb(var(--green-6) / 16%);
+  color: rgb(var(--green-6));
 
-.sider-footer {
-  padding: 10px 12px;
-  border-top: 1px solid var(--color-border-2);
-  font-size: 12px;
-  color: var(--color-text-3);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.app-main {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-.app-content {
-  flex: 1;
-  min-height: 0;
-  overflow: hidden;
-}
-
-.app-header {
-  display: flex;
-  align-items: center;
-  flex-shrink: 0;
-  gap: 10px;
-  height: var(--dl-header-height);
-  padding: 0 16px;
-  background: var(--color-bg-2);
-  border-bottom: 1px solid var(--color-border-2);
-}
-
-.header-back-btn {
-  width: 28px;
-  height: 28px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 16px;
-  color: var(--color-text-2);
-  background: transparent;
-  border: none;
-  border-radius: 6px;
-  cursor: pointer;
-
-  &:hover {
-    background: var(--color-fill-2);
+  &.active-task {
+    background: rgb(var(--primary-6) / 18%);
     color: rgb(var(--primary-6));
   }
+}
+
+.nav-dot-active {
+  position: absolute;
+  top: 7px;
+  right: 10px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: rgb(var(--primary-6));
+  box-shadow: 0 0 6px rgb(var(--primary-6) / 60%);
+}
+
+// Sidebar Footer
+.sider-footer {
+  padding: 12px 14px;
+  border-top: 1px solid var(--apple-sidebar-border);
+  font-size: 12px;
+}
+
+.sider-status-row {
+  display: flex;
+  align-items: center;
+}
+
+// Main Window Area
+.apple-main {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+// Unified Header
+.apple-header {
+  height: var(--dl-header-height);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  padding: 0 24px;
+  border-bottom: 1px solid var(--apple-separator);
+  background: var(--apple-content-bg);
+  -webkit-app-region: drag;
+  user-select: none;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 
 .header-title {
   font-size: 14px;
   font-weight: 600;
+  letter-spacing: -0.015em;
   color: var(--color-text-1);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+}
+
+.header-mock-chip {
+  padding: 2px 7px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 6px;
+  background: rgb(var(--orange-6) / 14%);
+  color: rgb(var(--orange-6));
 }
 
 .header-spacer {
   flex: 1;
 }
 
-.header-refresh {
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.header-mac-btn {
+  border: 1px solid var(--apple-card-border);
+  background: var(--apple-card-bg);
+  color: var(--color-text-2);
+  border-radius: 7px;
   width: 28px;
   height: 28px;
-  display: inline-flex;
+  display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 15px;
-  color: var(--color-text-3);
-  background: transparent;
-  border: none;
-  border-radius: 6px;
   cursor: pointer;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  transition: all 0.15s ease;
 
   &:hover {
-    background: var(--color-fill-2);
-    color: rgb(var(--primary-6));
+    background: var(--apple-group-bg);
+    color: var(--color-text-1);
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.08);
   }
+
+  &:active {
+    transform: scale(var(--apple-active-scale));
+  }
+}
+
+.apple-content {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  background-color: var(--apple-content-bg);
 }
 </style>

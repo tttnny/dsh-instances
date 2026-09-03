@@ -66,19 +66,29 @@ async function onRemove(id: string, version: string) {
 </script>
 
 <template>
-  <div class="versions-page" v-loading="loading">
-    <div class="dl-card">
+  <div class="dl-page versions-page" v-loading="loading">
+    <!-- Latest Card -->
+    <div class="dl-card version-card">
       <div class="dl-card-title">
         <h3>{{ t('versions.latest') }}</h3>
         <div class="dl-toolbar">
-          <a-button size="small" type="text" :loading="loading" @click="store.refreshRemoteVersions()">
-            {{ t('common.refresh') }}
-          </a-button>
-          <a-button type="primary" size="small" @click="openNew(null)">
-            {{ t('versions.newInstance') }}
-          </a-button>
+          <button class="mac-secondary-btn" :disabled="loading" @click="store.refreshRemoteVersions()">
+            <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8">
+              <path d="M13.5 8A5.5 5.5 0 1 1 12 4.1L14 2" />
+              <polyline points="14 5.5 14 2 10.5 2" />
+            </svg>
+            <span>{{ t('common.refresh') }}</span>
+          </button>
+          <button class="mac-primary-btn" @click="openNew(null)">
+            <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="8" y1="3" x2="8" y2="13" />
+              <line x1="3" y1="8" x2="13" y2="8" />
+            </svg>
+            <span>{{ t('versions.newInstance') }}</span>
+          </button>
         </div>
       </div>
+
       <template v-if="latest.length">
         <div
           v-for="row in latest"
@@ -86,88 +96,130 @@ async function onRemove(id: string, version: string) {
           class="version-row"
           @click="openNew(row.v.version)"
         >
-          <span class="version-icon" :class="{ pre: isPrerelease(row.v.version) }">◆</span>
+          <div class="version-icon" :class="{ pre: isPrerelease(row.v.version) }">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="16.5" y1="9.4" x2="7.5" y2="4.21" />
+              <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+              <polyline points="3.27 6.96 12 12.01 20.73 6.96" />
+              <line x1="12" y1="22.08" x2="12" y2="12" />
+            </svg>
+          </div>
           <div class="version-meta">
             <div class="version-name">
-              {{ row.v.version }}
-              <a-tag v-if="row.v.source === 'github'" size="small" color="orange">
+              <span class="version-text tnum">{{ row.v.version }}</span>
+              <span v-if="row.v.source === 'github'" class="source-build-chip">
                 {{ t('versions.sourceBuildTag') }}
-              </a-tag>
-              <a-tag v-if="installedSet.has(row.v.version)" size="small" color="green">
+              </span>
+              <span v-if="installedSet.has(row.v.version)" class="installed-chip">
                 {{ t('versions.installedTag') }}
-              </a-tag>
+              </span>
             </div>
             <div class="version-sub">
               {{ row.label }}<template v-if="row.v.released_at">，{{ t('versions.releasedAt', { date: formatDate(row.v.released_at) }) }}</template>
             </div>
           </div>
-          <span class="version-arrow">›</span>
+          <div class="version-arrow-wrap">
+            <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M6 12l4-4-4-4" />
+            </svg>
+          </div>
         </div>
       </template>
-      <div v-else class="card-empty">{{ loading ? t('common.loading') : t('versions.noData') }}</div>
+      <div v-else class="card-empty-text">{{ loading ? t('common.loading') : t('versions.noData') }}</div>
     </div>
 
-    <a-collapse :default-active-key="['stable', 'prerelease']" class="version-groups">
+    <!-- Disclosure Groups -->
+    <a-collapse :default-active-key="['stable', 'prerelease']" class="apple-collapse-card">
       <a-collapse-item key="stable" :header="t('versions.stable')">
         <template v-if="stable.length">
           <div v-for="v in stable" :key="v.version" class="version-row" @click="openNew(v.version)">
-            <span class="version-icon">◆</span>
+            <div class="version-icon">
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="16.5" y1="9.4" x2="7.5" y2="4.21" />
+                <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+                <polyline points="3.27 6.96 12 12.01 20.73 6.96" />
+                <line x1="12" y1="22.08" x2="12" y2="12" />
+              </svg>
+            </div>
             <div class="version-meta">
               <div class="version-name">
-                {{ v.version }}
-                <a-tag v-if="v.source === 'github'" size="small" color="orange">
+                <span class="version-text tnum">{{ v.version }}</span>
+                <span v-if="v.source === 'github'" class="source-build-chip">
                   {{ t('versions.sourceBuildTag') }}
-                </a-tag>
-                <a-tag v-if="installedSet.has(v.version)" size="small" color="green">
+                </span>
+                <span v-if="installedSet.has(v.version)" class="installed-chip">
                   {{ t('versions.installedTag') }}
-                </a-tag>
+                </span>
               </div>
               <div class="version-sub">{{ formatDate(v.released_at) }}</div>
             </div>
-            <span class="version-arrow">›</span>
+            <div class="version-arrow-wrap">
+              <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M6 12l4-4-4-4" />
+              </svg>
+            </div>
           </div>
         </template>
-        <div v-else class="card-empty">{{ t('versions.noData') }}</div>
+        <div v-else class="card-empty-text">{{ t('versions.noData') }}</div>
       </a-collapse-item>
+
       <a-collapse-item key="prerelease" :header="t('versions.prerelease')">
         <template v-if="prerelease.length">
           <div v-for="v in prerelease" :key="v.version" class="version-row" @click="openNew(v.version)">
-            <span class="version-icon pre">◆</span>
+            <div class="version-icon pre">
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="16.5" y1="9.4" x2="7.5" y2="4.21" />
+                <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+                <polyline points="3.27 6.96 12 12.01 20.73 6.96" />
+                <line x1="12" y1="22.08" x2="12" y2="12" />
+              </svg>
+            </div>
             <div class="version-meta">
               <div class="version-name">
-                {{ v.version }}
-                <a-tag v-if="v.source === 'github'" size="small" color="orange">
+                <span class="version-text tnum">{{ v.version }}</span>
+                <span v-if="v.source === 'github'" class="source-build-chip">
                   {{ t('versions.sourceBuildTag') }}
-                </a-tag>
-                <a-tag v-if="installedSet.has(v.version)" size="small" color="green">
+                </span>
+                <span v-if="installedSet.has(v.version)" class="installed-chip">
                   {{ t('versions.installedTag') }}
-                </a-tag>
+                </span>
               </div>
               <div class="version-sub">{{ formatDate(v.released_at) }}</div>
             </div>
-            <span class="version-arrow">›</span>
+            <div class="version-arrow-wrap">
+              <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M6 12l4-4-4-4" />
+              </svg>
+            </div>
           </div>
         </template>
-        <div v-else class="card-empty">{{ t('versions.noData') }}</div>
+        <div v-else class="card-empty-text">{{ t('versions.noData') }}</div>
       </a-collapse-item>
     </a-collapse>
 
+    <!-- Installed Card -->
     <div class="dl-card installed-card">
       <div class="dl-card-title">
         <h3>{{ t('versions.installedTitle') }}</h3>
       </div>
       <div v-for="v in store.versions" :key="v.id" class="installed-row">
-        <span class="version-icon">◆</span>
-        <div class="version-meta">
-          <div class="version-name">{{ v.version }}</div>
-          <div class="version-sub">{{ v.dir }}</div>
+        <div class="version-icon">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="20 6 9 17 4 12" />
+          </svg>
         </div>
-        <span class="used-by">{{ t('versions.usedBy', { count: usedByCount(v.id) }) }}</span>
+        <div class="version-meta">
+          <div class="version-name">
+            <span class="version-text tnum">{{ v.version }}</span>
+          </div>
+          <div class="version-sub tnum">{{ v.dir }}</div>
+        </div>
+        <span class="used-by-pill tnum">{{ t('versions.usedBy', { count: usedByCount(v.id) }) }}</span>
         <a-popconfirm
           :content="t('versions.confirmDeleteVersion', { version: v.version })"
           @ok="onRemove(v.id, v.version)"
         >
-          <a-button size="small" status="danger">{{ t('versions.deleteVersion') }}</a-button>
+          <button class="mac-action-pill danger">{{ t('versions.deleteVersion') }}</button>
         </a-popconfirm>
       </div>
       <a-empty v-if="store.versions.length === 0" :description="t('versions.emptyInstalled')" />
@@ -179,38 +231,119 @@ async function onRemove(id: string, version: string) {
 
 <style lang="scss" scoped>
 .versions-page {
-  max-width: 860px;
-  margin: 0 auto;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 18px;
 }
 
-.version-row {
+.mac-primary-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 12px;
+  font-size: 12.5px;
+  font-weight: 500;
+  border-radius: 7px;
+  border: none;
+  background: rgb(var(--primary-6));
+  color: #fff;
+  cursor: pointer;
+  transition: all 0.16s ease;
+
+  &:hover {
+    filter: brightness(1.06);
+  }
+
+  &:active {
+    transform: scale(var(--apple-active-scale));
+  }
+}
+
+.mac-secondary-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 10px;
+  font-size: 12.5px;
+  font-weight: 500;
+  border-radius: 7px;
+  border: 1px solid var(--apple-card-border);
+  background: var(--apple-card-bg);
+  color: var(--color-text-2);
+  cursor: pointer;
+  transition: all 0.16s ease;
+
+  &:hover:not(:disabled) {
+    background: var(--apple-group-bg);
+    color: var(--color-text-1);
+  }
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  &:active:not(:disabled) {
+    transform: scale(var(--apple-active-scale));
+  }
+}
+
+.mac-action-pill {
+  border: 1px solid var(--apple-card-border);
+  background: var(--apple-card-bg);
+  color: var(--color-text-2);
+  border-radius: 6px;
+  padding: 3px 9px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+
+  &.danger {
+    color: rgb(var(--red-6));
+
+    &:hover {
+      background: rgb(var(--red-6) / 12%);
+    }
+  }
+
+  &:active {
+    transform: scale(var(--apple-active-scale));
+  }
+}
+
+.version-row,
+.installed-row {
   display: flex;
   align-items: center;
   gap: 14px;
   padding: 10px 12px;
-  border-radius: 8px;
+  border-radius: 10px;
   cursor: pointer;
-  transition: background 0.15s;
+  transition: background 0.15s ease;
 
   &:hover {
-    background: var(--color-fill-2);
+    background: var(--apple-group-bg);
   }
 }
 
+.installed-row {
+  cursor: default;
+}
+
 .version-icon {
-  width: 40px;
-  height: 40px;
-  border-radius: 8px;
+  width: 36px;
+  height: 36px;
+  border-radius: 9px;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(135deg, #0fc6c2, #165dff);
+  background: linear-gradient(135deg, #165dff, #722ed1);
   color: #fff;
-  font-size: 16px;
   flex-shrink: 0;
+  box-shadow: 0 2px 6px rgb(0 0 0 / 12%);
 
   &.pre {
     background: linear-gradient(135deg, #f7ba1e, #f53f3f);
@@ -223,58 +356,73 @@ async function onRemove(id: string, version: string) {
 }
 
 .version-name {
-  font-weight: 600;
   display: flex;
   align-items: center;
   gap: 8px;
+
+  .version-text {
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    color: var(--color-text-1);
+  }
+}
+
+.source-build-chip {
+  padding: 1px 6px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 5px;
+  background: rgb(var(--orange-6) / 14%);
+  color: rgb(var(--orange-6));
+}
+
+.installed-chip {
+  padding: 1px 6px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 5px;
+  background: rgb(var(--green-6) / 14%);
+  color: rgb(var(--green-6));
 }
 
 .version-sub {
   font-size: 12px;
   color: var(--color-text-3);
+  margin-top: 2px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.version-arrow {
-  color: var(--color-text-3);
-  font-size: 20px;
-}
-
-.version-groups {
-  background: var(--color-bg-2);
-  border-radius: 8px;
-  border: none;
-  box-shadow: 0 1px 3px rgb(0 0 0 / 6%);
-}
-
-.installed-card {
-  margin-top: 0;
-}
-
-.installed-row {
+.version-arrow-wrap {
+  color: var(--color-text-4);
   display: flex;
   align-items: center;
-  gap: 14px;
-  padding: 10px 12px;
-  border-radius: 8px;
-
-  &:hover {
-    background: var(--color-fill-2);
-  }
 }
 
-.used-by {
+.used-by-pill {
+  padding: 2px 8px;
+  font-size: 11.5px;
+  border-radius: 6px;
+  background: var(--apple-group-bg);
   color: var(--color-text-3);
-  font-size: 12px;
   margin-right: 8px;
-  white-space: nowrap;
 }
 
-.card-empty {
-  padding: 18px 12px;
-  color: var(--color-text-3);
+.apple-collapse-card {
+  background: var(--apple-card-bg) !important;
+  backdrop-filter: blur(24px);
+  border: 1px solid var(--apple-card-border) !important;
+  border-top: 1px solid var(--apple-card-border-top) !important;
+  border-radius: var(--dl-card-radius) !important;
+  overflow: hidden;
+}
+
+.card-empty-text {
+  padding: 20px;
+  text-align: center;
+  color: var(--color-text-4);
   font-size: 13px;
 }
 </style>
