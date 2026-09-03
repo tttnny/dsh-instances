@@ -33,19 +33,19 @@ pnpm test:release-notes   # 跑 ci 目录的 release-notes 测试
 ## 重要：重新构建后必须替换自测用的 App
 
 `pnpm tauri build --bundles app` 只产出 `target/release/bundle/macos/` 下的新版本，
-**不会**自动更新自测用的 App。自测用的位置是 `~/Downloads/dsh-launcher.app`。
+**不会**自动更新自测用的 App。自测用的位置是 `/Applications/dsh-launcher.app`。
 修改代码并重新打 `.app` 包后，必须执行以下步骤，否则自测跑的一直是旧版本：
 
 ```bash
 # 1. 先退出运行中的自测副本
 pkill -f "dsh-launcher.app" 2>/dev/null || true
 
-# 2. 替换 App
-rm -rf ~/Downloads/dsh-launcher.app
-ditto "src-tauri/target/release/bundle/macos/dsh-launcher.app" ~/Downloads/dsh-launcher.app
+# 2. 替换 App（/Applications 当前用户可写，无需 sudo）
+rm -rf /Applications/dsh-launcher.app
+ditto "src-tauri/target/release/bundle/macos/dsh-launcher.app" /Applications/dsh-launcher.app
 
 # 3. 校验签名（替换后必须通过）
-codesign --verify --deep --strict ~/Downloads/dsh-launcher.app
+codesign --verify --deep --strict /Applications/dsh-launcher.app
 ```
 
 注意事项：

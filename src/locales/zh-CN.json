@@ -5,8 +5,11 @@
   },
   "nav": {
     "home": "启动",
-    "download": "下载",
-    "settings": "设置"
+    "settings": "设置",
+    "instances": "实例管理",
+    "plugins": "插件市场",
+    "tasks": "任务",
+    "toggleSider": "收起 / 展开侧栏"
   },
   "home": {
     "instance": "实例",
@@ -22,8 +25,8 @@
     "instanceList": "实例列表",
     "sharedHome": "共享 DSH_HOME",
     "sharedHomeWarning": "该实例与其他实例共用同一 DSH_HOME，会话与配置数据将被共享。",
-    "newsPlaceholder": "新 闻 区 域",
-    "newsLoading": "新闻加载中…",
+    "searchPlaceholder": "搜索实例名称",
+    "instanceCount": "共 {count} 个实例",
     "status": {
       "stopped": "已停止",
       "starting": "启动中",
@@ -64,11 +67,27 @@
       "edit": "设置",
       "copy": "复制",
       "delete": "删除"
-    }
+    },
+    "homesTitle": "DSH_HOME 管理",
+    "homesDesc": "管理启动器记录的 DSH_HOME 目录。实例引用中的目录不可删除，仅删除记录、不删磁盘文件。",
+    "homeName": "名称",
+    "homePath": "路径",
+    "homeUsedBy": "引用实例",
+    "homeUsedByCount": "{count} 个实例引用",
+    "homeNamePlaceholder": "例如：默认 DSH_HOME",
+    "homePathPlaceholder": "DSH_HOME 目录路径",
+    "pickDir": "选择目录",
+    "addHome": "添加",
+    "deleteHome": "删除",
+    "confirmDeleteHome": "确定删除 DSH_HOME「{name}」？仅删除启动器记录，不删除磁盘目录。",
+    "browserPickHint": "浏览器预览模式不支持系统目录选择，请手动输入路径",
+    "homesEmpty": "暂无 DSH_HOME，请在上方添加"
   },
   "download": {
     "createInstance": "实例创建",
     "plugins": "插件下载",
+    "stepPickVersion": "选版本",
+    "stepConfig": "配实例",
     "latest": "最新版本",
     "latestStable": "最新正式版",
     "latestPrerelease": "最新预览版",
@@ -101,6 +120,9 @@
   },
   "plugins": {
     "title": "插件下载",
+    "stepPickPlugin": "选插件",
+    "stepPickVersion": "选版本",
+    "stepPickTarget": "装到哪里",
     "searchPlaceholder": "搜索插件（名称 / 描述）",
     "sourceAll": "全部来源",
     "refresh": "刷新市场",
@@ -158,9 +180,6 @@
       "error": "错误 (error)",
       "hint": "运行日志写入数据目录 logs/latest.log，每次启动自动轮转上一份日志。"
     },
-    "newsSource": "新闻来源",
-    "newsSourcePlaceholder": "https://…/news.md 或本地 .md/.html 文件路径",
-    "newsSourceHint": "支持 Markdown（GFM + 内联 HTML + &gt;!遮罩!&lt; 剧透语法）与 HTML 文件；内容会先经 XSS 过滤再展示在启动页右侧新闻区域，链接在新窗口打开。",
     "skillRepos": {
       "title": "SKILL 仓库",
       "hint": "格式：https://[user:password{'@'}]github.com/user/repo[.git][#/path/to/skill]；在实例设置的 SKILL 页中从仓库安装或更新 SKILL，以 commit / tag 识别版本。",
@@ -199,19 +218,6 @@
       "applyDshHint": "开启后启动实例时注入 HTTP_PROXY / HTTPS_PROXY / NO_PROXY 并覆盖实例的环境变量；已经启动的实例必须重启才会生效。"
     },
     "saved": "设置已保存",
-    "homes": "DSH_HOME 管理",
-    "homeName": "名称",
-    "homePath": "路径",
-    "homeNamePlaceholder": "例如：默认 DSH_HOME",
-    "homePathPlaceholder": "DSH_HOME 目录路径",
-    "pickDir": "选择目录",
-    "addHome": "添加",
-    "deleteHome": "删除",
-    "confirmDeleteHome": "确定删除 DSH_HOME「{name}」？仅删除启动器记录，不删除磁盘目录。",
-    "homeInUse": "该 DSH_HOME 仍被实例引用，无法删除",
-    "browserPickHint": "浏览器预览模式不支持系统目录选择，请手动输入路径",
-    "instances": "实例管理提示",
-    "instancesHint": "实例的创建与编辑在主页进行。",
     "update": {
       "title": "启动器更新",
       "check": "检查更新",
@@ -244,7 +250,8 @@
       "plugins": "插件",
       "skills": "SKILL",
       "mcp": "MCP",
-      "terminal": "终端"
+      "terminal": "终端",
+      "ops": "运维与终端"
     },
     "name": "实例名称",
     "namePlaceholder": "例如：主实例",
@@ -262,6 +269,7 @@
     "goDownload": "前往下载页",
     "defaultProfile": "默认 Profile",
     "defaultProfilePlaceholder": "启动时默认选择的 Profile",
+    "defaultProfileHint": "与上方 DSH_HOME 联动：切换 HOME 后请重新确认默认项。",
     "profileCreatePlaceholder": "输入新 Profile 名称后创建",
     "profileCreate": "创建",
     "profileCreated": "Profile「{name}」已创建",
@@ -414,6 +422,7 @@
     "pluginsBatchEnabled": "已启用 {count} 个插件",
     "pluginsBatchDisabled": "已禁用 {count} 个插件",
     "terminalDesc": "嵌入当前实例的系统终端（PTY），工作目录为该实例的 DSH_HOME。终端内的 dsh 命令已重定向到当前实例的 DSH CLI，可直接执行 dsh 操作该实例。",
+    "opsDesc": "运行态配置：端口与文件入口和下方终端放在同一页，改完即用。",
     "terminalRunning": "运行中",
     "terminalStarting": "启动中…",
     "terminalExited": "会话已退出",
@@ -474,6 +483,8 @@
   "tasks": {
     "title": "任务管理",
     "fab": "任务",
+    "runningHint": "后台有 {count} 个任务进行中",
+    "idleHint": "无后台任务",
     "empty": "暂无任务",
     "noLogs": "暂无日志",
     "installingHint": "正在安装依赖，请稍候…",

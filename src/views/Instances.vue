@@ -125,6 +125,59 @@ async function onOpenBrowser(id: string) {
     Message.error(String(e))
   }
 }
+
+// --- DSH_HOME management (moved here from Settings: a HOME only makes
+// sense next to the instances that use it) ------------------------------------
+
+const newHomeName = ref('')
+const newHomePath = ref('')
+
+/** How many instances reference a HOME (drives the delete guard hint). */
+function homeUsedBy(id: string): number {
+  return store.instances.filter((i) => i.home_id === id).length
+}
+
+async function onPickDir() {
+  if (api.isTauri) {
+    try {
+      const { open } = await import('@tauri-apps/plugin-dialog')
+      const dir = await open({ directory: true, multiple: false })
+      if (typeof dir === 'string') newHomePath.value = dir
+    } catch (e) {
+      Message.error(String(e))
+    }
+  } else {
+    Message.info(t('instances.browserPickHint'))
+  }
+}
+
+async function onAddHome() {
+  try {
+    await api.createHome(newHomeName.value, newHomePath.value)
+    newHomeName.value = ''
+    newHomePath.value = ''
+    await store.refreshHomes()
+    Message.success(t('settings.saved'))
+  } catch (e) {
+    Message.error(String(e))
+  }
+}
+
+async function onRemoveHome(id: string) {
+  try {
+    await api.removeHome(id)
+    await store.refreshHomes()
+  } catch (e) {
+    Message.error(String(e))
+  }
+}
+
+const homeColumns = computed(() => [
+  { title: t('instances.homeName'), dataIndex: 'name', width: 180 },
+  { title: t('instances.homePath'), dataIndex: 'path', ellipsis: true, tooltip: true },
+  { title: t('instances.homeUsedBy'), slotName: 'usedBy', width: 140 },
+  { title: t('instances.table.actions'), slotName: 'actions', width: 110, align: 'center' as const },
+])
 </script>
 
 <template>
@@ -136,7 +189,7 @@ async function onOpenBrowser(id: string) {
           <a-button @click="modpackImportVisible = true">
             {{ t('modpack.importButton') }}
           </a-button>
-          <a-button type="primary" @click="router.push({ name: 'download' })">
+          <a-button type="primary" @click="router.push({ name: 'download-create' })">
             {{ t('instances.newInstance') }}
           </a-button>
         </div>
@@ -202,10 +255,46 @@ async function onOpenBrowser(id: string) {
             <template #image>
               <div class="empty-title">{{ t('instances.emptyTitle') }}</div>
             </template>
-            <a-button type="primary" @click="router.push({ name: 'download' })">
+            <a-button type="primary" @click="router.push({ name: 'download-create' })">
               {{ t('instances.newInstance') }}
             </a-button>
           </a-empty>
+        </template>
+      </a-table>
+    </div>
+
+    <div class="dl-card">
+      <div class="dl-card-title">
+        <h3>{{ t('instances.homesTitle') }}</h3>
+      </div>
+      <p class="dl-card-desc">{{ t('instances.homesDesc') }}</p>
+
+      <div class="home-add-row">
+        <a-input v-model="newHomeName" :placeholder="t('instances.homeNamePlaceholder')" style="width: 200px" />
+        <a-input v-model="newHomePath" :placeholder="t('instances.homePathPlaceholder')" class="home-path-input" />
+        <a-button @click="onPickDir">{{ t('instances.pickDir') }}</a-button>
+        <a-button type="primary" :disabled="!newHomeName.trim() || !newHomePath.trim()" @click="onAddHome">
+          {{ t('instances.addHome') }}
+        </a-button>
+      </div>
+
+      <a-table :columns="homeColumns" :data="store.homes" :pagination="false" row-key="id">
+        <template #usedBy="{ record }">
+          <span class="home-used">{{ t('instances.homeUsedByCount', { count: homeUsedBy(record.id) }) }}</span>
+        </template>
+        <template #actions="{ record }">
+          <a-popconfirm
+            :content="t('instances.confirmDeleteHome', { name: record.name })"
+            :disabled="homeUsedBy(record.id) > 0"
+            @ok="onRemoveHome(record.id)"
+          >
+            <a-button size="small" status="danger" :disabled="homeUsedBy(record.id) > 0">
+              {{ t('instances.deleteHome') }}
+            </a-button>
+          </a-popconfirm>
+        </template>
+        <template #empty>
+          <a-empty :description="t('instances.homesEmpty')" />
         </template>
       </a-table>
     </div>
@@ -276,5 +365,21 @@ async function onOpenBrowser(id: string) {
   margin: 0;
   font-size: 12px;
   color: var(--color-text-3);
+}
+
+.home-add-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.home-path-input {
+  flex: 1;
+}
+
+.home-used {
+  font-size: 12px;
+  color: var(--color-text-3);
+  white-space: nowrap;
 }
 </style>

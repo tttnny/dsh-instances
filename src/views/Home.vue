@@ -1,19 +1,18 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { Message, Notification } from '@arco-design/web-vue'
-import { Marked } from 'marked'
-import markedAlert from 'marked-alert'
-import markedFootnote from 'marked-footnote'
-import markedKatex from 'marked-katex-extension'
-import DOMPurify from 'dompurify'
 import { api } from '@/api'
 import { useLauncherStore } from '@/stores/launcher'
-import { markedSpoiler } from '@/utils/marked-spoiler'
+import type { DshInstance } from '@/api/types'
 import launcherDefaultIcon from '@/assets/launcher-icon.png'
-import 'katex/dist/katex.min.css'
 
-// --- Instance icons (issue #8): the launch panel avatar follows the instance --
+const router = useRouter()
+const { t } = useI18n()
+const store = useLauncherStore()
+
+// --- Instance icons (issue #8): each card avatar follows its instance --------
 
 const iconMap = ref<Record<string, string | null>>({})
 
@@ -33,63 +32,10 @@ async function loadIcons() {
   iconMap.value = next
 }
 
-const marked = new Marked({ gfm: true, breaks: true })
-  .use(markedAlert())
-  .use(markedFootnote())
-  .use(markedKatex({ throwOnError: false }))
-  .use(markedSpoiler())
-
-// marked-alert only matches UPPERCASE alert types, while GitHub treats
-// `[!note]`/`[!Note]` the same as `[!NOTE]`. Normalize the type to uppercase
-// before parsing so all casings render as alerts.
-const ALERT_RE = /^(\s*>+\s*)\[!([a-z]+)]/gim
-function normalizeAlerts(md: string): string {
-  return md.replace(ALERT_RE, (_m, prefix: string, type: string) => `${prefix}[!${type.toUpperCase()}]`)
-}
-
-// News links always open in a new window (the system browser on desktop)
-// instead of navigating the launcher itself. Internal anchors (#footnote-…)
-// must stay in-page so footnote jumps work.
-DOMPurify.addHook('afterSanitizeAttributes', (node) => {
-  if (node.tagName === 'A' && !(node.getAttribute('href') ?? '').startsWith('#')) {
-    node.setAttribute('target', '_blank')
-    node.setAttribute('rel', 'noopener noreferrer')
-  }
-})
-
-/** Renders md (GFM + inline HTML) or raw HTML, sanitized against XSS. */
-function renderNews(content: string, source: string): string {
-  const isHtml = /\.html?([?#].*)?$/i.test(source)
-  const raw = isHtml ? content : (marked.parse(normalizeAlerts(content)) as string)
-  return DOMPurify.sanitize(raw, {
-    USE_PROFILES: { html: true },
-    ADD_TAGS: ['input', 'section'],
-    ADD_ATTR: ['type', 'checked', 'disabled', 'id', 'data-footnote-ref', 'data-footnote-backref', 'aria-describedby', 'aria-label'],
-    FORBID_TAGS: ['style', 'iframe', 'object', 'embed', 'form', 'textarea', 'select', 'button'],
-    FORBID_ATTR: ['srcset'],
-  })
-}
-
-const { t } = useI18n()
-const store = useLauncherStore()
-
-// --- Linked dual dropdowns: instance -> profiles of its DSH_HOME ----------
-
-const selectedInstanceId = ref<string | undefined>(store.settings.last_instance_id ?? undefined)
-const profiles = ref<string[]>([])
-const selectedProfile = ref<string | undefined>(undefined)
-const profilesLoading = ref(false)
-
-const selectedInstance = computed(() =>
-  selectedInstanceId.value ? store.instanceById(selectedInstanceId.value) : undefined,
-)
-
-const selectedStatus = computed(() =>
-  selectedInstanceId.value ? store.statusOf(selectedInstanceId.value) : undefined,
-)
-
-const selectedIcon = computed(() =>
-  selectedInstanceId.value ? (iconMap.value[selectedInstanceId.value] ?? null) : null,
+watch(
+  () => store.instances.map((i) => `${i.id}:${i.icon ?? ''}`).join(','),
+  loadIcons,
+  { immediate: true },
 )
 
 watch(
@@ -98,196 +44,109 @@ watch(
   { immediate: true },
 )
 
-const selectedVersion = computed(() =>
-  selectedInstance.value ? store.versionById(selectedInstance.value.version_id) : undefined,
-)
-
-const sharedHome = computed(() => {
-  if (!selectedInstance.value) return false
-  return store.instances.filter((i) => i.home_id === selectedInstance.value!.home_id).length > 1
+onMounted(() => {
+  ensureProfiles()
 })
 
-async function loadProfiles() {
-  profiles.value = []
-  selectedProfile.value = undefined
-  const inst = selectedInstance.value
-  if (!inst) return
-  profilesLoading.value = true
+// --- Per-card profile state ---------------------------------------------------
+// Each card owns its Profile dropdown; selection prefers last-used, then the
+// instance default, then the first available — same order as before.
+
+const profilesById = ref<Record<string, string[]>>({})
+const profileSel = ref<Record<string, string | undefined>>({})
+const profilesLoading = ref<Record<string, boolean>>({})
+const restarting = ref<Record<string, boolean>>({})
+
+async function loadProfilesFor(inst: DshInstance) {
+  if (profilesLoading.value[inst.id]) return
+  profilesLoading.value[inst.id] = true
   try {
-    profiles.value = await api.listProfiles(inst.home_id)
-    selectedProfile.value =
-      (inst.last_profile && profiles.value.includes(inst.last_profile) && inst.last_profile) ||
-      (inst.default_profile && profiles.value.includes(inst.default_profile) && inst.default_profile) ||
-      profiles.value[0] ||
+    const list = await api.listProfiles(inst.home_id)
+    profilesById.value[inst.id] = list
+    const keep = profileSel.value[inst.id]
+    if (keep && list.includes(keep)) return
+    profileSel.value[inst.id] =
+      (inst.last_profile && list.includes(inst.last_profile) && inst.last_profile) ||
+      (inst.default_profile && list.includes(inst.default_profile) && inst.default_profile) ||
+      list[0] ||
       undefined
-    if (profiles.value.length === 0) {
+    if (list.length === 0) {
       Message.warning(t('home.noProfile'))
     }
   } catch (e) {
     Message.error(t('common.operationFailed', { msg: String(e) }))
   } finally {
-    profilesLoading.value = false
+    profilesLoading.value[inst.id] = false
   }
 }
 
-watch(selectedInstanceId, () => {
-  loadProfiles()
-  if (selectedInstanceId.value) {
-    api.updateSettings({ last_instance_id: selectedInstanceId.value }).then((s) => {
-      store.settings = s
-    })
+function ensureProfiles() {
+  for (const inst of store.instances) {
+    if (!(inst.id in profilesById.value)) void loadProfilesFor(inst)
   }
-})
-
-// On mount the instance id may already be restored from settings without a
-// watch change (e.g. navigating back to this page) — load profiles eagerly.
-onMounted(() => {
-  if (selectedInstanceId.value) loadProfiles()
-  loadNews()
-})
-
-// --- News area ---------------------------------------------------------------
-
-const newsSource = computed(() => (store.settings.news_source ?? '').trim())
-const newsHtml = ref('')
-const newsLoading = ref(false)
-const newsError = ref('')
-
-async function loadNews() {
-  const src = newsSource.value
-  newsHtml.value = ''
-  newsError.value = ''
-  if (!src) return
-  newsLoading.value = true
-  try {
-    const content = await api.fetchNews(src)
-    newsHtml.value = renderNews(content, src)
-  } catch (e) {
-    newsError.value = String(e)
-  } finally {
-    newsLoading.value = false
-  }
-}
-
-watch(newsSource, () => loadNews())
-
-// --- Mermaid diagrams --------------------------------------------------------
-// Renders ```mermaid blocks inside the news DOM after it is inserted. The
-// heavy mermaid module is loaded lazily on first use.
-
-let mermaidApi: typeof import('mermaid').default | null = null
-
-async function renderMermaidBlocks(root: HTMLElement) {
-  const blocks = root.querySelectorAll<HTMLElement>('pre > code.language-mermaid')
-  if (!blocks.length) return
-  if (!mermaidApi) {
-    mermaidApi = (await import('mermaid')).default
-    mermaidApi.initialize({
-      startOnLoad: false,
-      theme: document.body.getAttribute('arco-theme') === 'dark' ? 'dark' : 'default',
-      securityLevel: 'strict',
-    })
-  }
-  let i = 0
-  for (const code of blocks) {
-    const pre = code.parentElement as HTMLElement | null
-    if (!pre) continue
-    const text = code.textContent ?? ''
-    i += 1
-    try {
-      const id = `mermaid-${Date.now()}-${i}`
-      const { svg } = await mermaidApi.render(id, text)
-      pre.outerHTML = svg
-    } catch {
-      // Keep the raw code block on failure so the source stays visible.
-      code.classList.remove('language-mermaid')
-      code.classList.add('language-text')
-    }
-  }
-}
-
-watch(newsHtml, async () => {
-  await nextTick()
-  const root = document.querySelector<HTMLElement>('.news-body')
-  if (root) await renderMermaidBlocks(root)
-})
-
-// Footnote / in-page anchor jumps: the content scrolls inside an a-scrollbar,
-// so native `href="#id"` navigation does nothing. Intercept and scroll the
-// scroll container manually.
-function onNewsClick(e: MouseEvent) {
-  // Spoiler bars ( >!…!< ): click pins the revealed state (hover already
-  // reveals via CSS). A revealed spoiler falls through so links inside it
-  // keep working.
-  const spoiler = (e.target as HTMLElement | null)?.closest('.md-spoiler:not(.md-spoiler-revealed)')
-  if (spoiler) {
-    spoiler.classList.add('md-spoiler-revealed')
-    e.preventDefault()
-    return
-  }
-  const target = (e.target as HTMLElement | null)?.closest('a[href^="#"]') as HTMLAnchorElement | null
-  if (!target) return
-  e.preventDefault()
-  const id = target.getAttribute('href')!.slice(1)
-  const el = document.getElementById(id)
-  if (!el) return
-  const container = document.querySelector<HTMLElement>('.news-area .arco-scrollbar-container')
-  if (!container) return
-  const containerTop = container.getBoundingClientRect().top
-  const top = container.scrollTop + el.getBoundingClientRect().top - containerTop
-  container.scrollTo({ top, behavior: 'smooth' })
-  history.replaceState(null, '', `#${id}`)
 }
 
 watch(
-  () => store.instances,
-  () => {
-    if (selectedInstanceId.value && !store.instanceById(selectedInstanceId.value)) {
-      selectedInstanceId.value = store.instances[0]?.id ?? undefined
-    }
-    if (!selectedInstanceId.value && store.instances.length > 0) {
-      selectedInstanceId.value =
-        store.settings.last_instance_id ?? store.instances[0]?.id ?? undefined
-    }
-  },
-  { deep: true, immediate: true },
+  () => store.instances.map((i) => i.id).join(','),
+  () => ensureProfiles(),
+  { immediate: true },
 )
 
-// --- Start / stop / open ---------------------------------------------------
-
-const starting = computed(() => selectedStatus.value?.state === 'starting')
-const running = computed(() => selectedStatus.value?.state === 'running')
-
-const canStart = computed(
-  () =>
-    !!selectedInstance.value &&
-    !!selectedProfile.value &&
-    !starting.value &&
-    !running.value &&
-    !restarting.value &&
-    !!store.versionById(selectedInstance.value.version_id),
-)
-
-const launchSubtitle = computed(() => {
-  if (!selectedInstance.value) return ''
-  const v = selectedVersion.value?.version ?? '?'
-  const p = selectedProfile.value ?? '—'
-  return `${v} · ${p}`
+onMounted(() => {
+  ensureProfiles()
 })
 
-async function onStart() {
-  if (!selectedInstanceId.value || !selectedProfile.value || restarting.value) return
-  try {
-    await api.startInstance(selectedInstanceId.value, selectedProfile.value)
-    Message.success(t('home.started'))
-    // Dependency-tree preflight: advisory only, never blocks the launch. A
-    // duplicated core copy in the profile silently breaks every tool call at
-    // runtime, so surface it here instead of leaving users to dig through logs.
-    void reportHealth(selectedInstanceId.value, selectedProfile.value)
-  } catch (e) {
-    Message.error(String(e))
-  }
+function touchLastUsed(id: string) {
+  if (store.settings.last_instance_id === id) return
+  void api.updateSettings({ last_instance_id: id }).then((s) => {
+    store.settings = s
+  })
 }
+
+// --- Card helpers -------------------------------------------------------------
+
+const query = ref('')
+
+const filteredInstances = computed(() => {
+  const q = query.value.trim().toLowerCase()
+  if (!q) return store.instances
+  return store.instances.filter((i) => i.name.toLowerCase().includes(q))
+})
+
+function versionOf(inst: DshInstance): string {
+  return store.versionById(inst.version_id)?.version ?? inst.version_id
+}
+
+function homeNameOf(inst: DshInstance): string {
+  return store.homeById(inst.home_id)?.name ?? inst.home_id
+}
+
+function sharedHome(inst: DshInstance): boolean {
+  return store.instances.filter((i) => i.home_id === inst.home_id).length > 1
+}
+
+function statusOf(id: string) {
+  return store.statusOf(id)
+}
+
+function canStart(inst: DshInstance): boolean {
+  const st = statusOf(inst.id).state
+  return (
+    !!profileSel.value[inst.id] &&
+    st !== 'starting' &&
+    st !== 'running' &&
+    !restarting.value[inst.id] &&
+    !!store.versionById(inst.version_id)
+  )
+}
+
+function subtitleOf(inst: DshInstance): string {
+  const v = versionOf(inst)
+  const p = profileSel.value[inst.id] ?? '—'
+  return `${v} · ${p}`
+}
+
+// --- Start / stop / open ---------------------------------------------------
 
 async function reportHealth(instanceId: string, profile: string) {
   try {
@@ -302,39 +161,50 @@ async function reportHealth(instanceId: string, profile: string) {
   }
 }
 
-async function onStop() {
-  if (!selectedInstanceId.value || restarting.value) return
+async function onStart(inst: DshInstance) {
+  const profile = profileSel.value[inst.id]
+  if (!profile || restarting.value[inst.id]) return
   try {
-    await api.stopInstance(selectedInstanceId.value)
+    await api.startInstance(inst.id, profile)
+    touchLastUsed(inst.id)
+    Message.success(t('home.started'))
+    // Dependency-tree preflight: advisory only, never blocks the launch. A
+    // duplicated core copy in the profile silently breaks every tool call at
+    // runtime, so surface it here instead of leaving users to dig through logs.
+    void reportHealth(inst.id, profile)
+  } catch (e) {
+    Message.error(String(e))
+  }
+}
+
+async function onStop(inst: DshInstance) {
+  if (restarting.value[inst.id]) return
+  try {
+    await api.stopInstance(inst.id)
     Message.success(t('home.stopped'))
   } catch (e) {
     Message.error(String(e))
   }
 }
 
-const restarting = ref(false)
-
-// Restart with the currently selected profile (falling back to the running one).
-async function onRestart() {
-  // Snapshot the id up front: the instance selector stays enabled during the
-  // two awaits, so re-reading selectedInstanceId could stop A and start B.
-  const id = selectedInstanceId.value
-  if (!id || restarting.value) return
-  const profile = selectedProfile.value ?? selectedStatus.value?.profile ?? undefined
+// Restart with the card's selected profile (falling back to the running one).
+async function onRestart(inst: DshInstance) {
+  if (restarting.value[inst.id]) return
+  const profile = profileSel.value[inst.id] ?? statusOf(inst.id).profile ?? undefined
   if (!profile) {
     Message.warning(t('home.noProfile'))
     return
   }
-  restarting.value = true
+  restarting.value[inst.id] = true
   try {
     try {
-      await api.stopInstance(id)
+      await api.stopInstance(inst.id)
     } catch (e) {
       Message.error(String(e))
       return
     }
     try {
-      await api.startInstance(id, profile)
+      await api.startInstance(inst.id, profile)
     } catch (e) {
       // Stopped but not started: report the state first so the user knows
       // a manual start is the way back, then the underlying reason.
@@ -343,17 +213,17 @@ async function onRestart() {
       return
     }
     Message.success(t('home.started'))
-    void reportHealth(id, profile)
+    void reportHealth(inst.id, profile)
   } finally {
-    restarting.value = false
+    restarting.value[inst.id] = false
   }
 }
 
 // Opens the running instance URL in the system browser (new tab in preview).
-async function onOpenBrowser() {
-  if (!selectedInstanceId.value) return
+async function onOpenBrowser(inst: DshInstance) {
   try {
-    await api.openInstanceWindow(selectedInstanceId.value)
+    await api.openInstanceWindow(inst.id)
+    touchLastUsed(inst.id)
   } catch (e) {
     Message.error(String(e))
   }
@@ -364,182 +234,275 @@ function copyUrl(url: string) {
   Message.success(t('common.copied'))
 }
 
+// --- Card overflow: settings / open dir / view log ----------------------------
+
+function goSettings(inst: DshInstance) {
+  void router.push({ name: 'instance-edit', params: { id: inst.id } }).catch(() => undefined)
+}
+
+const dirBusy = ref<Record<string, boolean>>({})
+const logBusy = ref<Record<string, boolean>>({})
+
+async function onOpenDirectory(inst: DshInstance) {
+  dirBusy.value[inst.id] = true
+  try {
+    const path = await api.openInstanceDirectory(inst.id)
+    Message.success(t('instanceEdit.dirOpened', { path }))
+  } catch (e) {
+    Message.error(String(e))
+  } finally {
+    dirBusy.value[inst.id] = false
+  }
+}
+
+async function onViewLog(inst: DshInstance) {
+  logBusy.value[inst.id] = true
+  try {
+    const path = await api.openInstanceLog(inst.id)
+    Message.success(t('instanceEdit.logOpened', { path }))
+  } catch (e) {
+    Message.error(String(e))
+  } finally {
+    logBusy.value[inst.id] = false
+  }
+}
+
+function goNew() {
+  void router.push({ name: 'download-create' }).catch(() => undefined)
+}
+
+function goManage() {
+  void router.push({ name: 'instances' }).catch(() => undefined)
+}
 </script>
 
 <template>
-  <div class="home-page">
-    <!-- Left launch panel -->
-    <aside class="launch-panel">
-      <div class="identity-block">
-        <div class="instance-avatar"><img :src="selectedIcon ?? launcherDefaultIcon" alt="" /></div>
-        <div class="instance-name">{{ selectedInstance?.name ?? '—' }}</div>
-        <a-tag
-          v-if="selectedStatus"
-          :color="selectedStatus.state === 'running' ? 'green' : selectedStatus.state === 'starting' ? 'orange' : 'gray'"
-          size="small"
-        >
-          {{ t(`home.status.${selectedStatus.state}`) }}
-        </a-tag>
-        <div v-if="running && selectedStatus?.url" class="running-url">
-          <a-link class="url-link" :title="selectedStatus.url" @click="onOpenBrowser">
-            {{ selectedStatus.url }}
+  <div class="dl-page home-page">
+    <!-- Toolbar: search + entry points -->
+    <div class="home-toolbar">
+      <a-input
+        v-model="query"
+        :placeholder="t('home.searchPlaceholder')"
+        allow-clear
+        class="home-search"
+      />
+      <span class="home-count">{{ t('home.instanceCount', { count: filteredInstances.length }) }}</span>
+      <span class="home-spacer" />
+      <a-button @click="goManage">{{ t('home.instanceList') }}</a-button>
+      <a-button type="primary" @click="goNew">{{ t('instances.newInstance') }}</a-button>
+    </div>
+
+    <!-- Empty state -->
+    <div v-if="store.instances.length === 0" class="dl-card home-empty">
+      <a-empty :description="t('instances.emptyDesc')">
+        <template #image>
+          <div class="empty-title">{{ t('instances.emptyTitle') }}</div>
+        </template>
+        <a-button type="primary" @click="goNew">{{ t('instances.newInstance') }}</a-button>
+      </a-empty>
+    </div>
+    <div v-else-if="filteredInstances.length === 0" class="dl-card home-empty">
+      <a-empty :description="t('plugins.noMatch')" />
+    </div>
+
+    <!-- Instance card wall -->
+    <div v-else class="instance-grid">
+      <div v-for="inst in filteredInstances" :key="inst.id" class="dl-card instance-card">
+        <div class="card-head">
+          <div class="instance-avatar">
+            <img :src="iconMap[inst.id] ?? launcherDefaultIcon" alt="" />
+          </div>
+          <div class="card-title-block">
+            <div class="card-name" :title="inst.name">{{ inst.name }}</div>
+            <div class="card-meta">{{ versionOf(inst) }} · {{ homeNameOf(inst) }}</div>
+          </div>
+          <a-tag
+            :color="statusOf(inst.id).state === 'running' ? 'green' : statusOf(inst.id).state === 'starting' ? 'orange' : 'gray'"
+            size="small"
+          >
+            {{ t(`home.status.${statusOf(inst.id).state}`) }}
+          </a-tag>
+        </div>
+
+        <div v-if="sharedHome(inst)" class="card-shared">
+          <a-tooltip :content="t('home.sharedHomeWarning')">
+            <a-tag color="orangered" size="small">{{ t('home.sharedHome') }}</a-tag>
+          </a-tooltip>
+        </div>
+
+        <div class="card-profile-row">
+          <span class="field-label">{{ t('home.profile') }}</span>
+          <a-select
+            v-model="profileSel[inst.id]"
+            :placeholder="t('home.selectProfile')"
+            :loading="profilesLoading[inst.id]"
+            size="small"
+            class="card-profile-select"
+            allow-clear
+            @change="touchLastUsed(inst.id)"
+          >
+            <a-option v-for="p in profilesById[inst.id] ?? []" :key="p" :value="p">{{ p }}</a-option>
+          </a-select>
+          <a-button
+            size="mini"
+            type="text"
+            :loading="profilesLoading[inst.id]"
+            @click="loadProfilesFor(inst)"
+          >
+            ⟳
+          </a-button>
+        </div>
+
+        <div v-if="statusOf(inst.id).state === 'running' && statusOf(inst.id).url" class="card-url">
+          <a-link class="url-link" :title="statusOf(inst.id).url!" @click="onOpenBrowser(inst)">
+            {{ statusOf(inst.id).url }}
           </a-link>
-          <a-button size="mini" type="text" class="url-copy" @click="copyUrl(selectedStatus.url)">
+          <a-button size="mini" type="text" class="url-copy" @click="copyUrl(statusOf(inst.id).url!)">
             {{ t('common.copy') }}
           </a-button>
         </div>
-        <a-tooltip v-if="sharedHome" :content="t('home.sharedHomeWarning')">
-          <a-tag color="orangered" size="small">{{ t('home.sharedHome') }}</a-tag>
-        </a-tooltip>
-      </div>
 
-      <div class="selector-block">
-        <div class="field">
-          <span class="field-label">{{ t('home.instance') }}</span>
-          <a-select
-            v-model="selectedInstanceId"
-            :placeholder="t('home.selectInstance')"
-            allow-clear
-          >
-            <a-option v-for="inst in store.instances" :key="inst.id" :value="inst.id">
-              <span class="option-line">
-                {{ inst.name }}
-                <a-tag
-                  v-if="store.statusOf(inst.id).state === 'running'"
-                  size="small"
-                  color="green"
-                >
-                  {{ t('home.status.running') }}
-                </a-tag>
-              </span>
-            </a-option>
-          </a-select>
-        </div>
-        <div class="field">
-          <span class="field-label">{{ t('home.profile') }}</span>
-          <a-select
-            v-model="selectedProfile"
-            :placeholder="t('home.selectProfile')"
-            :loading="profilesLoading"
-            :disabled="!selectedInstance"
-            allow-clear
-          >
-            <a-option v-for="p in profiles" :key="p" :value="p">{{ p }}</a-option>
-          </a-select>
-        </div>
-      </div>
-
-      <div class="action-block">
-        <template v-if="!running && !restarting">
-          <a-button
-            type="primary"
-            size="large"
-            long
-            :disabled="!canStart"
-            :loading="starting"
-            class="launch-button"
-            @click="onStart"
-          >
-            <span class="launch-text">{{ starting ? t('home.starting') : t('home.start') }}</span>
-            <span v-if="launchSubtitle && !starting" class="launch-sub">{{ launchSubtitle }}</span>
-          </a-button>
-        </template>
-        <template v-else-if="running">
-          <a-button type="primary" size="large" long class="launch-button" @click="onOpenBrowser">
-            <span class="launch-text">{{ t('home.openWindow') }}</span>
-            <span class="launch-sub">{{ launchSubtitle }}</span>
-          </a-button>
-          <div class="stop-row">
-            <a-button status="danger" class="stop-half" :disabled="restarting" @click="onStop">
-              {{ t('home.stop') }}
+        <div class="card-actions">
+          <template v-if="statusOf(inst.id).state !== 'running' && !restarting[inst.id]">
+            <a-button
+              type="primary"
+              long
+              :disabled="!canStart(inst)"
+              :loading="statusOf(inst.id).state === 'starting'"
+              @click="onStart(inst)"
+            >
+              {{ statusOf(inst.id).state === 'starting' ? t('home.starting') : t('home.start') }}
             </a-button>
-            <a-button class="stop-half" :loading="restarting" :disabled="restarting" @click="onRestart">
+            <div v-if="subtitleOf(inst)" class="card-sub">{{ subtitleOf(inst) }}</div>
+          </template>
+          <template v-else-if="statusOf(inst.id).state === 'running'">
+            <a-button type="primary" long @click="onOpenBrowser(inst)">
+              {{ t('home.openWindow') }}
+            </a-button>
+            <div class="stop-row">
+              <a-button
+                status="danger"
+                class="stop-half"
+                :disabled="restarting[inst.id]"
+                @click="onStop(inst)"
+              >
+                {{ t('home.stop') }}
+              </a-button>
+              <a-button
+                class="stop-half"
+                :loading="restarting[inst.id]"
+                :disabled="restarting[inst.id]"
+                @click="onRestart(inst)"
+              >
+                {{ t('home.restart') }}
+              </a-button>
+            </div>
+          </template>
+          <template v-else>
+            <!-- Restart in flight: hold a disabled loading slot so progress
+                 stays visible instead of flipping back mid-flight. -->
+            <a-button type="primary" long disabled :loading="true">
               {{ t('home.restart') }}
             </a-button>
-          </div>
-        </template>
-        <template v-else>
-          <!-- Restart in flight: stop already landed, start not yet done.
-               Hold a disabled loading slot so progress stays visible instead
-               of flipping back to the start button mid-flight. -->
-          <a-button type="primary" size="large" long disabled :loading="true" class="launch-button">
-            <span class="launch-text">{{ t('home.restart') }}</span>
-          </a-button>
-        </template>
-      </div>
-    </aside>
+          </template>
+        </div>
 
-    <!-- Right news area: renders the configured md/html source (XSS-sanitized) -->
-    <section class="news-area">
-      <div v-if="!newsSource" class="news-placeholder">{{ t('home.newsPlaceholder') }}</div>
-      <div v-else-if="newsLoading" class="news-placeholder">
-        <a-spin :size="20" />
+        <div class="card-foot">
+          <a-button size="small" type="text" @click="goSettings(inst)">
+            {{ t('instances.table.edit') }}
+          </a-button>
+          <span class="foot-spacer" />
+          <a-button
+            size="small"
+            type="text"
+            :loading="dirBusy[inst.id]"
+            @click="onOpenDirectory(inst)"
+          >
+            {{ t('instanceEdit.openDirectory') }}
+          </a-button>
+          <a-button
+            size="small"
+            type="text"
+            :loading="logBusy[inst.id]"
+            @click="onViewLog(inst)"
+          >
+            {{ t('instanceEdit.viewLog') }}
+          </a-button>
+        </div>
       </div>
-      <div v-else-if="newsError" class="news-placeholder news-error">
-        <span>{{ newsError }}</span>
-        <a-button size="mini" @click="loadNews">{{ t('common.refresh') }}</a-button>
-      </div>
-      <a-scrollbar v-else outer-style="height: 100%" style="height: 100%; overflow-y: auto">
-        <article class="news-body" v-html="newsHtml" @click="onNewsClick"></article>
-      </a-scrollbar>
-    </section>
+    </div>
   </div>
 </template>
 
 <style lang="scss" scoped>
 .home-page {
   display: flex;
-  height: calc(100vh - var(--dl-header-height));
-}
-
-.launch-panel {
-  width: 320px;
-  flex-shrink: 0;
-  display: flex;
   flex-direction: column;
-  padding: 20px 16px;
-  background: var(--color-bg-2);
-  border-right: 1px solid var(--color-border-2);
+  gap: 16px;
 }
 
-.selector-block {
+.home-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.home-search {
+  width: 260px;
+}
+
+.home-count {
+  font-size: 12px;
+  color: var(--color-text-3);
+  white-space: nowrap;
+}
+
+.home-spacer {
+  flex: 1;
+}
+
+.home-empty {
+  text-align: center;
+  padding: 48px 24px;
+}
+
+.empty-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-text-1);
+}
+
+.instance-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 16px;
+  padding-bottom: 24px;
+}
+
+.instance-card {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  margin-bottom: 14px;
+  margin-top: 0 !important;
 }
 
-.field {
+.card-head {
   display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.field-label {
-  font-size: 12px;
-  color: var(--color-text-3);
-}
-
-.identity-block {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
   align-items: center;
-  justify-content: center;
-  gap: 10px;
-  min-height: 0;
+  gap: 12px;
+  min-width: 0;
 }
 
 .instance-avatar {
-  width: 88px;
-  height: 88px;
-  border-radius: 16px;
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
   background: linear-gradient(135deg, #165dff, #722ed1);
   display: flex;
   align-items: center;
   justify-content: center;
   overflow: hidden;
-  box-shadow: 0 6px 16px rgb(22 93 255 / 25%);
+  flex-shrink: 0;
   user-select: none;
 
   img {
@@ -549,21 +512,55 @@ function copyUrl(url: string) {
   }
 }
 
-.instance-name {
-  font-size: 18px;
-  font-weight: 600;
+.card-title-block {
+  flex: 1;
+  min-width: 0;
 }
 
-.running-url {
+.card-name {
+  font-size: 15px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card-meta {
+  font-size: 12px;
+  color: var(--color-text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card-shared {
+  margin-top: -6px;
+}
+
+.card-profile-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.field-label {
+  font-size: 12px;
+  color: var(--color-text-3);
+  flex-shrink: 0;
+}
+
+.card-profile-select {
+  flex: 1;
+  min-width: 0;
+}
+
+.card-url {
   display: flex;
   align-items: center;
   gap: 6px;
   font-size: 12px;
-  max-width: 100%;
   min-width: 0;
 
-  // Token-bearing URLs are long; ellipsize the link and keep the full URL
-  // in the hover title / copy button.
   .url-link {
     flex: 1 1 auto;
     min-width: 0;
@@ -578,27 +575,17 @@ function copyUrl(url: string) {
   }
 }
 
-.action-block {
+.card-actions {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
+  margin-top: auto;
 }
 
-.launch-button {
-  height: 64px;
-  display: flex;
-  flex-direction: column;
-
-  .launch-text {
-    font-size: 17px;
-    font-weight: 600;
-  }
-
-  .launch-sub {
-    font-size: 12px;
-    opacity: 0.8;
-    margin-top: 2px;
-  }
+.card-sub {
+  font-size: 12px;
+  color: var(--color-text-3);
+  text-align: center;
 }
 
 .stop-row {
@@ -607,274 +594,18 @@ function copyUrl(url: string) {
 
   .stop-half {
     flex: 1;
-    height: 40px;
   }
 }
 
-.news-area {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  background:
-    radial-gradient(circle at 30% 20%, rgb(22 93 255 / 6%), transparent 40%),
-    radial-gradient(circle at 70% 80%, rgb(114 46 209 / 6%), transparent 40%);
-}
-
-.news-placeholder {
-  height: 100%;
+.card-foot {
   display: flex;
-  flex-direction: column;
   align-items: center;
-  justify-content: center;
-  gap: 12px;
-  color: var(--color-text-4);
-  font-size: 14px;
-  letter-spacing: 4px;
-  user-select: none;
+  gap: 4px;
+  border-top: 1px solid var(--color-border-1);
+  padding-top: 8px;
 }
 
-.news-error {
-  color: rgb(var(--red-6));
-  font-size: 13px;
-  letter-spacing: 0;
-  padding: 0 24px;
-  text-align: center;
-  word-break: break-all;
-}
-
-.news-body {
-  padding: 24px 28px;
-  font-size: 14px;
-  line-height: 1.7;
-  color: var(--color-text-1);
-  word-wrap: break-word;
-
-  :deep(h1),
-  :deep(h2),
-  :deep(h3) {
-    margin: 18px 0 10px;
-    line-height: 1.35;
-  }
-
-  :deep(h1) {
-    font-size: 22px;
-  }
-
-  :deep(h2) {
-    font-size: 18px;
-    padding-bottom: 6px;
-    border-bottom: 1px solid var(--color-border-2);
-  }
-
-  :deep(h3) {
-    font-size: 16px;
-  }
-
-  :deep(p) {
-    margin: 8px 0;
-  }
-
-  // Task-list checkboxes (GitHub 风格)
-  :deep(li) {
-    list-style: none;
-
-    input[type='checkbox'] {
-      margin-right: 6px;
-      vertical-align: -2px;
-      accent-color: rgb(var(--primary-6));
-    }
-  }
-
-  :deep(a) {
-    color: rgb(var(--primary-6));
-    text-decoration: none;
-
-    &:hover {
-      text-decoration: underline;
-    }
-  }
-
-  :deep(code) {
-    font-family: Consolas, 'Courier New', monospace;
-    font-size: 0.9em;
-    background: var(--color-fill-2);
-    border-radius: 4px;
-    padding: 1px 5px;
-  }
-
-  // Inline spoilers ( >!…!< ): the bar flattens the (translucent in dark
-  // mode) text color over the page background so it is fully opaque, while
-  // the glyphs are transparent — nothing can show through. Hover or click
-  // reveals normal text on a transparent background.
-  :deep(.md-spoiler) {
-    border-radius: 4px;
-    padding: 0 4px;
-    transition:
-      background-color 0.15s,
-      color 0.15s;
-  }
-
-  :deep(.md-spoiler:not(.md-spoiler-revealed):not(:hover)) {
-    background:
-      linear-gradient(var(--color-text-1), var(--color-text-1)),
-      var(--color-bg-1);
-    color: transparent;
-    cursor: pointer;
-    user-select: none;
-
-    // Children only: the span itself must keep its opaque bar background.
-    * {
-      color: transparent !important;
-      background-color: transparent !important;
-      text-shadow: none !important;
-      text-decoration-color: transparent !important;
-    }
-
-    a {
-      pointer-events: none;
-    }
-  }
-
-  :deep(pre) {
-    background: #1d2129;
-    color: #a9b7c6;
-    border-radius: 8px;
-    padding: 12px 16px;
-    overflow-x: auto;
-    margin: 12px 0;
-
-    code {
-      background: none;
-      padding: 0;
-    }
-  }
-
-  :deep(blockquote) {
-    margin: 12px 0;
-    padding: 4px 14px;
-    border-left: 3px solid rgb(var(--primary-6));
-    background: var(--color-fill-1);
-    color: var(--color-text-2);
-    border-radius: 0 6px 6px 0;
-  }
-
-  // GitHub-style alerts: > [!NOTE] / [!TIP] / [!IMPORTANT] / [!WARNING] / [!CAUTION]
-  :deep(.markdown-alert) {
-    margin: 12px 0;
-    padding: 10px 14px;
-    border: 1px solid;
-    border-radius: 6px;
-    font-size: 13.5px;
-
-    .markdown-alert-title {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      margin: 0 0 6px;
-      font-weight: 600;
-
-      svg {
-        width: 16px;
-        height: 16px;
-        flex-shrink: 0;
-      }
-    }
-
-    p {
-      margin: 4px 0;
-    }
-  }
-
-  :deep(.markdown-alert-note) {
-    border-color: rgb(var(--primary-6));
-    background: rgb(var(--primary-6) / 6%);
-
-    .markdown-alert-title {
-      color: rgb(var(--primary-6));
-    }
-  }
-
-  :deep(.markdown-alert-tip) {
-    border-color: rgb(var(--green-6));
-    background: rgb(var(--green-6) / 6%);
-
-    .markdown-alert-title {
-      color: rgb(var(--green-6));
-    }
-  }
-
-  :deep(.markdown-alert-important) {
-    border-color: rgb(var(--purple-6));
-    background: rgb(var(--purple-6) / 6%);
-
-    .markdown-alert-title {
-      color: rgb(var(--purple-6));
-    }
-  }
-
-  :deep(.markdown-alert-warning) {
-    border-color: rgb(var(--orange-6));
-    background: rgb(var(--orange-6) / 6%);
-
-    .markdown-alert-title {
-      color: rgb(var(--orange-6));
-    }
-  }
-
-  :deep(.markdown-alert-caution) {
-    border-color: rgb(var(--red-6));
-    background: rgb(var(--red-6) / 6%);
-
-    .markdown-alert-title {
-      color: rgb(var(--red-6));
-    }
-  }
-
-  :deep(table) {
-    border-collapse: collapse;
-    margin: 12px 0;
-    max-width: 100%;
-    display: block;
-    overflow-x: auto;
-
-    th,
-    td {
-      border: 1px solid var(--color-border-2);
-      padding: 6px 12px;
-      font-size: 13px;
-    }
-
-    th {
-      background: var(--color-fill-2);
-      font-weight: 600;
-    }
-  }
-
-  :deep(ul),
-  :deep(ol) {
-    margin: 8px 0;
-    padding-left: 24px;
-  }
-
-  :deep(li) {
-    margin: 4px 0;
-  }
-
-  :deep(img) {
-    max-width: 100%;
-    border-radius: 6px;
-  }
-
-  :deep(hr) {
-    border: none;
-    border-top: 1px solid var(--color-border-2);
-    margin: 16px 0;
-  }
-}
-
-.option-line {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
+.foot-spacer {
+  flex: 1;
 }
 </style>

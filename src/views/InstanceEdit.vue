@@ -28,7 +28,7 @@ const isNew = computed(() => !editingId.value)
 
 // --- Sidebar tabs ---------------------------------------------------------------
 
-type TabKey = 'basic' | 'env' | 'profiles' | 'plugins' | 'skills' | 'mcp' | 'terminal'
+type TabKey = 'basic' | 'env' | 'profiles' | 'plugins' | 'skills' | 'mcp' | 'ops'
 const activeTab = ref<TabKey>('basic')
 
 // --- Form state ---------------------------------------------------------------
@@ -1024,6 +1024,13 @@ const rowSelection = {
 // --- Terminal tab ------------------------------------------------------------
 
 const terminalRunning = ref(false)
+
+/** HOME display for the context bar (dedicated dir vs named HOME). */
+const homeLabel = computed(() => {
+  if (!homeId.value) return '—'
+  if (homeId.value === DEDICATED) return t('instanceEdit.dedicatedHome')
+  return store.homeById(homeId.value)?.name ?? homeId.value
+})
 </script>
 
 <template>
@@ -1036,13 +1043,31 @@ const terminalRunning = ref(false)
         <a-menu-item key="plugins">{{ t('instanceEdit.tabs.plugins') }}</a-menu-item>
         <a-menu-item key="skills">{{ t('instanceEdit.tabs.skills') }}</a-menu-item>
         <a-menu-item key="mcp">{{ t('instanceEdit.tabs.mcp') }}</a-menu-item>
-        <a-menu-item key="terminal">{{ t('instanceEdit.tabs.terminal') }}</a-menu-item>
+        <a-menu-item key="ops">{{ t('instanceEdit.tabs.ops') }}</a-menu-item>
       </a-menu>
     </aside>
     <section class="edit-content">
       <a-scrollbar type="track" outer-style="height: 100%" style="height: 100%; overflow-y: auto">
         <div class="edit-inner">
-          <!-- Basic settings -->
+          <!-- Context bar: name + version + HOME always visible, so the tabs
+               that depend on the HOME (profiles / plugins / skills / mcp)
+               never leave the user guessing what they operate on. -->
+          <div class="dl-card context-bar">
+            <img v-if="iconUrl" :src="iconUrl" class="context-icon" alt="" />
+            <img v-else src="@/assets/launcher-icon.png" class="context-icon" alt="" />
+            <div class="context-main">
+              <div class="context-name">{{ name.trim() || t('instanceEdit.titleNew') }}</div>
+              <div class="context-meta">
+                {{ t('instanceEdit.version') }}：{{ store.versionById(versionId ?? '')?.version ?? '—' }}
+                · {{ t('instanceEdit.home') }}：{{ homeLabel }}
+                <template v-if="defaultProfile"> · {{ t('instanceEdit.defaultProfile') }}：{{ defaultProfile }}</template>
+              </div>
+            </div>
+            <a-tag v-if="editingId" size="small" color="arcoblue">{{ editingId.slice(0, 8) }}</a-tag>
+          </div>
+
+          <!-- Basic settings: identity + HOME + default profile live together
+               (default profile only makes sense once the HOME is known). -->
           <div v-if="activeTab === 'basic'" class="dl-card edit-card">
             <a-form layout="vertical" class="edit-form" :model="{}">
               <a-form-item :label="t('instanceEdit.name')" required>
@@ -1100,32 +1125,19 @@ const terminalRunning = ref(false)
                 </a-alert>
               </a-form-item>
 
-              <a-form-item v-if="editingId" :label="t('instanceEdit.port')">
-                <a-space>
-                  <a-input
-                    v-model="portInput"
-                    :placeholder="t('instanceEdit.portPlaceholder')"
-                    allow-clear
-                    style="width: 200px"
-                    @press-enter="applyPort"
-                  />
-                  <a-button size="small" :loading="portBusy" @click="applyPort">
-                    {{ t('instanceEdit.portApply') }}
-                  </a-button>
-                </a-space>
-                <p class="icon-hint">{{ t('instanceEdit.portHint') }}</p>
-              </a-form-item>
-
-              <a-form-item v-if="editingId" :label="t('instanceEdit.files')">
-                <a-space>
-                  <a-button size="small" :loading="dirBusy" @click="onOpenDirectory">
-                    {{ t('instanceEdit.openDirectory') }}
-                  </a-button>
-                  <a-button size="small" :loading="logBusy" @click="onViewLog">
-                    {{ t('instanceEdit.viewLog') }}
-                  </a-button>
-                </a-space>
-                <p class="icon-hint">{{ t('instanceEdit.filesHint') }}</p>
+              <a-form-item
+                v-if="homeId && homeId !== DEDICATED"
+                :label="t('instanceEdit.defaultProfile')"
+              >
+                <a-select
+                  v-model="defaultProfile"
+                  :placeholder="t('instanceEdit.defaultProfilePlaceholder')"
+                  allow-clear
+                  style="max-width: 360px"
+                >
+                  <a-option v-for="p in profiles" :key="p" :value="p">{{ p }}</a-option>
+                </a-select>
+                <p class="icon-hint">{{ t('instanceEdit.defaultProfileHint') }}</p>
               </a-form-item>
             </a-form>
 
@@ -1170,6 +1182,7 @@ const terminalRunning = ref(false)
           <div v-else-if="activeTab === 'profiles'" class="dl-card edit-card">
             <h4 class="env-title">{{ t('instanceEdit.tabs.profiles') }}</h4>
             <p class="env-desc">{{ t('instanceEdit.profilesDesc') }}</p>
+            <p class="tab-context">{{ t('instanceEdit.home') }}：{{ homeLabel }}</p>
 
             <template v-if="homeId && homeId !== DEDICATED">
               <div v-if="profiles.length === 0" class="profiles-empty">
@@ -1266,6 +1279,7 @@ const terminalRunning = ref(false)
           <div v-else-if="activeTab === 'plugins'" class="dl-card edit-card">
             <h4 class="env-title">{{ t('instanceEdit.tabs.plugins') }}</h4>
             <p class="env-desc">{{ t('instanceEdit.pluginsDesc') }}</p>
+            <p class="tab-context">{{ t('instanceEdit.home') }}：{{ homeLabel }}</p>
 
             <template v-if="homeId && homeId !== DEDICATED">
               <div class="plugins-toolbar">
@@ -1378,6 +1392,7 @@ const terminalRunning = ref(false)
           <div v-else-if="activeTab === 'skills'" class="dl-card edit-card">
             <h4 class="env-title">{{ t('instanceEdit.tabs.skills') }}</h4>
             <p class="env-desc">{{ t('instanceEdit.skillsDesc') }}</p>
+            <p class="tab-context">{{ t('instanceEdit.home') }}：{{ homeLabel }}</p>
 
             <template v-if="homeId && editingId">
               <div class="skill-toolbar">
@@ -1467,6 +1482,7 @@ const terminalRunning = ref(false)
           <div v-else-if="activeTab === 'mcp'" class="dl-card edit-card">
             <h4 class="env-title">{{ t('instanceEdit.tabs.mcp') }}</h4>
             <p class="env-desc">{{ t('instanceEdit.mcpDesc') }}</p>
+            <p class="tab-context">{{ t('instanceEdit.home') }}：{{ homeLabel }}</p>
 
             <template v-if="homeId && homeId !== DEDICATED">
               <div class="mcp-toolbar">
@@ -1542,24 +1558,62 @@ const terminalRunning = ref(false)
             </a-alert>
           </div>
 
-          <!-- Terminal -->
-          <div v-else class="dl-card edit-card">
-            <h4 class="env-title">{{ t('instanceEdit.tabs.terminal') }}</h4>
-            <p class="env-desc">{{ t('instanceEdit.terminalDesc') }}</p>
+          <!-- Ops: port + files + terminal live together (all about the
+               running instance), so port changes and log inspection no
+               longer hide in Basic while the terminal sits elsewhere. -->
+          <div v-else class="ops-stack">
+            <div class="dl-card edit-card">
+              <h4 class="env-title">{{ t('instanceEdit.tabs.ops') }}</h4>
+              <p class="env-desc">{{ t('instanceEdit.opsDesc') }}</p>
+              <a-form layout="vertical" :model="{}">
+                <a-form-item v-if="editingId" :label="t('instanceEdit.port')">
+                  <a-space>
+                    <a-input
+                      v-model="portInput"
+                      :placeholder="t('instanceEdit.portPlaceholder')"
+                      allow-clear
+                      style="width: 200px"
+                      @press-enter="applyPort"
+                    />
+                    <a-button size="small" :loading="portBusy" @click="applyPort">
+                      {{ t('instanceEdit.portApply') }}
+                    </a-button>
+                  </a-space>
+                  <p class="icon-hint">{{ t('instanceEdit.portHint') }}</p>
+                </a-form-item>
 
-            <template v-if="editingId">
-              <TerminalEmbed
-                v-if="editingId"
-                :key="editingId"
-                :instance-id="editingId"
-                class="terminal-embed"
-                @status="(v: boolean) => (terminalRunning = v)"
-              />
-            </template>
+                <a-form-item v-if="editingId" :label="t('instanceEdit.files')">
+                  <a-space>
+                    <a-button size="small" :loading="dirBusy" @click="onOpenDirectory">
+                      {{ t('instanceEdit.openDirectory') }}
+                    </a-button>
+                    <a-button size="small" :loading="logBusy" @click="onViewLog">
+                      {{ t('instanceEdit.viewLog') }}
+                    </a-button>
+                  </a-space>
+                  <p class="icon-hint">{{ t('instanceEdit.filesHint') }}</p>
+                </a-form-item>
+              </a-form>
+            </div>
 
-            <a-alert v-else type="info">
-              {{ t('instanceEdit.terminalNoHome') }}
-            </a-alert>
+            <div class="dl-card edit-card">
+              <h4 class="env-title">{{ t('instanceEdit.tabs.terminal') }}</h4>
+              <p class="env-desc">{{ t('instanceEdit.terminalDesc') }}</p>
+
+              <template v-if="editingId">
+                <TerminalEmbed
+                  v-if="editingId"
+                  :key="editingId"
+                  :instance-id="editingId"
+                  class="terminal-embed"
+                  @status="(v: boolean) => (terminalRunning = v)"
+                />
+              </template>
+
+              <a-alert v-else type="info">
+                {{ t('instanceEdit.terminalNoHome') }}
+              </a-alert>
+            </div>
           </div>
         </div>
       </a-scrollbar>
@@ -1829,6 +1883,55 @@ const terminalRunning = ref(false)
   // Full-width card: stretch to fill the content area like the download page.
   width: 100%;
   box-sizing: border-box;
+
+  & + & {
+    margin-top: 16px;
+  }
+}
+
+.ops-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.context-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+  padding: 14px 20px;
+}
+
+.context-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  object-fit: cover;
+  flex-shrink: 0;
+  border: 1px solid var(--color-border-2);
+}
+
+.context-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.context-name {
+  font-size: 15px;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-meta {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--color-text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .edit-form {
@@ -1887,6 +1990,16 @@ const terminalRunning = ref(false)
   margin-top: 0;
   color: var(--color-text-3);
   font-size: 13px;
+}
+
+.tab-context {
+  margin: 0 0 12px;
+  font-size: 12px;
+  color: var(--color-text-2);
+  background: var(--color-fill-1);
+  border: 1px solid var(--color-border-1);
+  border-radius: 6px;
+  padding: 6px 10px;
 }
 
 .env-row {
@@ -1948,6 +2061,11 @@ const terminalRunning = ref(false)
   display: flex;
   gap: 12px;
   justify-content: center;
+  position: sticky;
+  bottom: 0;
+  padding: 12px 0 4px;
+  background: linear-gradient(transparent, var(--color-bg-2) 32%);
+  z-index: 5;
 }
 
 .terminal-row {

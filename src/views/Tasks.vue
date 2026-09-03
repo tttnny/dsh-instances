@@ -1,13 +1,11 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { Message } from '@arco-design/web-vue'
 import { api } from '@/api'
 import { useLauncherStore } from '@/stores/launcher'
 import type { TaskInfo, TaskState } from '@/api/types'
 
-const router = useRouter()
 const { t } = useI18n()
 const store = useLauncherStore()
 
@@ -103,7 +101,6 @@ const sortedTasks = computed(() => store.taskList)
         <h3>{{ t('tasks.title') }}</h3>
         <div class="dl-toolbar">
           <a-button size="small" @click="store.refreshTasks()">{{ t('common.refresh') }}</a-button>
-          <a-button size="small" type="text" @click="router.back()">{{ t('download.back') }}</a-button>
         </div>
       </div>
 

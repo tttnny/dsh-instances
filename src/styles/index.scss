@@ -3,6 +3,10 @@
 :root {
   --dl-header-height: 52px;
   --dl-content-max: 1080px;
+  --dl-sider-width: 208px;
+  --dl-sider-collapsed-width: 60px;
+  --dl-card-radius: 10px;
+  --dl-page-gap: 16px;
 }
 
 * {
@@ -40,12 +44,13 @@ body {
 
 .dl-card {
   background: var(--color-bg-2);
-  border-radius: 8px;
+  border: 1px solid var(--color-border-1);
+  border-radius: var(--dl-card-radius);
   padding: 20px 24px;
   box-shadow: 0 1px 3px rgb(0 0 0 / 6%);
 
   & + & {
-    margin-top: 16px;
+    margin-top: var(--dl-page-gap);
   }
 }
 
@@ -53,6 +58,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 12px;
   margin-bottom: 16px;
 
   h3 {
@@ -62,8 +68,21 @@ body {
   }
 }
 
+.dl-card-desc {
+  margin: -8px 0 16px;
+  font-size: 13px;
+  color: var(--color-text-3);
+  line-height: 1.6;
+}
+
 .dl-toolbar {
   display: flex;
   gap: 8px;
   align-items: center;
+}
+
+.dl-empty-action {
+  margin-top: 12px;
+  display: flex;
+  justify-content: center;
 }

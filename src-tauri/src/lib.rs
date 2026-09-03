@@ -208,7 +208,6 @@ pub fn run() {
             mcp::delete_mcp_server,
             commands::get_settings,
             commands::update_settings,
-            commands::fetch_news,
             update::check_launcher_update,
             plugins::fetch_plugin_market,
             plugins::fetch_plugin_versions,

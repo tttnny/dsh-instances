@@ -5,8 +5,11 @@
   },
   "nav": {
     "home": "Launch",
-    "download": "Download",
-    "settings": "Settings"
+    "settings": "Settings",
+    "instances": "Instances",
+    "plugins": "Plugin market",
+    "tasks": "Tasks",
+    "toggleSider": "Collapse / expand sidebar"
   },
   "home": {
     "instance": "Instance",
@@ -22,8 +25,8 @@
     "instanceList": "Instance list",
     "sharedHome": "Shared DSH_HOME",
     "sharedHomeWarning": "This instance shares its DSH_HOME with other instances; sessions and configuration are shared.",
-    "newsPlaceholder": "N E W S",
-    "newsLoading": "Loading news…",
+    "searchPlaceholder": "Search instances",
+    "instanceCount": "{count} instance(s)",
     "status": {
       "stopped": "Stopped",
       "starting": "Starting",
@@ -64,11 +67,27 @@
       "edit": "Settings",
       "copy": "Copy",
       "delete": "Delete"
-    }
+    },
+    "homesTitle": "DSH_HOME management",
+    "homesDesc": "Manage the DSH_HOME directories known to the launcher. A directory referenced by an instance cannot be removed; removal only drops the record, never the files on disk.",
+    "homeName": "Name",
+    "homePath": "Path",
+    "homeUsedBy": "Used by",
+    "homeUsedByCount": "used by {count} instance(s)",
+    "homeNamePlaceholder": "e.g. Default DSH_HOME",
+    "homePathPlaceholder": "Path of the DSH_HOME directory",
+    "pickDir": "Browse…",
+    "addHome": "Add",
+    "deleteHome": "Delete",
+    "confirmDeleteHome": "Remove DSH_HOME \"{name}\"? Only the launcher record is removed; the directory stays on disk.",
+    "browserPickHint": "Directory picking is unavailable in browser preview; type the path manually",
+    "homesEmpty": "No DSH_HOME yet — add one above"
   },
   "download": {
     "createInstance": "Create instance",
     "plugins": "Plugins",
+    "stepPickVersion": "Pick version",
+    "stepConfig": "Configure",
     "latest": "Latest versions",
     "latestStable": "Latest stable",
     "latestPrerelease": "Latest pre-release",
@@ -101,6 +120,9 @@
   },
   "plugins": {
     "title": "Plugins",
+    "stepPickPlugin": "Pick plugin",
+    "stepPickVersion": "Pick version",
+    "stepPickTarget": "Install target",
     "searchPlaceholder": "Search plugins (name / description)",
     "sourceAll": "All sources",
     "refresh": "Refresh market",
@@ -158,9 +180,6 @@
       "error": "Error",
       "hint": "Runtime logs go to logs/latest.log in the data directory; the previous log is rotated on every launch."
     },
-    "newsSource": "News source",
-    "newsSourcePlaceholder": "https://…/news.md or a local .md/.html path",
-    "newsSourceHint": "Markdown (GFM + inline HTML + the &gt;!spoiler!&lt; redaction syntax) and HTML are supported; content is XSS-sanitized before being shown in the news area on the home page, and links open in a new window.",
     "skillRepos": {
       "title": "SKILL repositories",
       "hint": "Format: https://[user:password{'@'}]github.com/user/repo[.git][#/path/to/skill]; install or update skills from a repo on the instance SKILL tab, versioned by commit / tag.",
@@ -185,7 +204,7 @@
       "nativeTag": "Native",
       "refresh": "Refresh instance and task status",
       "back": "Go back (blurs inputs when typing)",
-      "note": "Use \u2318 on macOS and Ctrl on Windows / Linux; \u2318/Ctrl+R only refreshes in-app state and never reloads the page; ordinary editing keys inside inputs are never hijacked. Rows marked \"Native\" are handled directly by the system menu and work inside the app too."
+      "note": "Use ⌘ on macOS and Ctrl on Windows / Linux; ⌘/Ctrl+R only refreshes in-app state and never reloads the page; ordinary editing keys inside inputs are never hijacked. Rows marked \"Native\" are handled directly by the system menu and work inside the app too."
     },
     "proxy": {
       "title": "Proxy",
@@ -199,19 +218,6 @@
       "applyDshHint": "When enabled, launching an instance injects HTTP_PROXY / HTTPS_PROXY / NO_PROXY, overriding the instance's environment variables; instances that are already running must be restarted for this to take effect."
     },
     "saved": "Settings saved",
-    "homes": "DSH_HOME management",
-    "homeName": "Name",
-    "homePath": "Path",
-    "homeNamePlaceholder": "e.g. Default DSH_HOME",
-    "homePathPlaceholder": "Path of the DSH_HOME directory",
-    "pickDir": "Browse…",
-    "addHome": "Add",
-    "deleteHome": "Delete",
-    "confirmDeleteHome": "Remove DSH_HOME \"{name}\"? Only the launcher record is removed; the directory stays on disk.",
-    "homeInUse": "This DSH_HOME is still referenced by an instance and cannot be removed",
-    "browserPickHint": "Directory picking is unavailable in browser preview; type the path manually",
-    "instances": "Instance management",
-    "instancesHint": "Create and edit instances from the home page.",
     "update": {
       "title": "Launcher updates",
       "check": "Check for updates",
@@ -244,7 +250,8 @@
       "plugins": "Plugins",
       "terminal": "Terminal",
       "skills": "SKILL",
-      "mcp": "MCP"
+      "mcp": "MCP",
+      "ops": "Ops & terminal"
     },
     "name": "Instance name",
     "namePlaceholder": "e.g. Main instance",
@@ -262,6 +269,7 @@
     "goDownload": "Open download page",
     "defaultProfile": "Default profile",
     "defaultProfilePlaceholder": "Profile preselected at start",
+    "defaultProfileHint": "Follows the DSH_HOME above: confirm the default again after switching HOME.",
     "profileCreatePlaceholder": "Enter a new profile name to create",
     "profileCreate": "Create",
     "profileCreated": "Profile \"{name}\" created",
@@ -414,6 +422,7 @@
     "pluginsBatchEnabled": "Enabled {count} plugins",
     "pluginsBatchDisabled": "Disabled {count} plugins",
     "terminalDesc": "Embedded system terminal (PTY) for this instance, working directory is its DSH_HOME. The dsh command inside is redirected to this instance's DSH CLI, so you can drive this instance with dsh directly.",
+    "opsDesc": "Runtime operations: port and file entries share this page with the terminal below, ready to use right after a change.",
     "terminalRunning": "Running",
     "terminalStarting": "Starting…",
     "terminalExited": "Session exited",
@@ -474,6 +483,8 @@
   "tasks": {
     "title": "Task Manager",
     "fab": "Tasks",
+    "runningHint": "{count} background task(s) running",
+    "idleHint": "No background tasks",
     "empty": "No tasks",
     "noLogs": "No logs yet",
     "installingHint": "Installing dependencies, please wait…",

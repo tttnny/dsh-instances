@@ -9,97 +9,69 @@ const router = useRouter()
 const { t } = useI18n()
 const store = useLauncherStore()
 
-const selectedKeys = computed(() => {
+type Flow = 'create' | 'plugins'
+
+const flow = computed<Flow>(() => {
   const name = route.name as string
-  if (name === 'download-plugins') return ['plugins']
-  return ['create']
+  return name === 'download-plugins' || name === 'plugin-version' || name === 'plugin-install'
+    ? 'plugins'
+    : 'create'
 })
 
-const onCreatePage = computed(() => selectedKeys.value[0] === 'create')
+const stepTitles = computed(() =>
+  flow.value === 'create'
+    ? [t('download.stepPickVersion'), t('download.stepConfig')]
+    : [t('plugins.stepPickPlugin'), t('plugins.stepPickVersion'), t('plugins.stepPickTarget')],
+)
 
-function onMenuSelect(key: string) {
-  router.push({ name: key === 'plugins' ? 'download-plugins' : 'download-create' })
-}
+const current = computed(() => {
+  const name = route.name as string
+  if (flow.value === 'create') return name === 'download-name' ? 2 : 1
+  if (name === 'plugin-version') return 2
+  if (name === 'plugin-install') return 3
+  return 1
+})
 
-function onRefreshVersions() {
-  store.refreshRemoteVersions()
+/** Clicking a finished step goes back; forward jumps stay disabled by flow state. */
+function onStepChange(next: number) {
+  if (next >= current.value) return
+  if (flow.value === 'create') {
+    if (next === 1) router.push({ name: 'download-create' })
+    return
+  }
+  if (next === 1) {
+    router.push({ name: 'download-plugins' })
+  } else if (next === 2 && store.pluginWizard) {
+    router.push({ name: 'plugin-version' })
+  }
 }
 </script>
 
 <template>
-  <div class="download-page">
-    <aside class="download-sidebar">
-      <a-menu :selected-keys="selectedKeys" @menu-item-click="onMenuSelect">
-        <a-menu-item key="create">
-          <span class="menu-line">
-            {{ t('download.createInstance') }}
-            <a-button
-              v-if="onCreatePage"
-              type="text"
-              size="mini"
-              class="refresh-btn"
-              :loading="store.remoteLoading"
-              @click.stop="onRefreshVersions"
-            >
-              ⟳
-            </a-button>
-          </span>
-        </a-menu-item>
-        <a-menu-item key="plugins">{{ t('download.plugins') }}</a-menu-item>
-      </a-menu>
-    </aside>
-    <section class="download-content">
-      <a-scrollbar type="track" outer-style="height: 100%" style="height: 100%; overflow-y: auto">
-        <div class="download-inner">
-          <router-view />
-        </div>
-      </a-scrollbar>
-    </section>
+  <div class="dl-page download-page">
+    <div class="dl-card wizard-head">
+      <a-steps :current="current" small @change="onStepChange">
+        <a-step v-for="(title, i) in stepTitles" :key="title + i" :title="title" />
+      </a-steps>
+    </div>
+    <div class="wizard-body">
+      <router-view />
+    </div>
   </div>
 </template>
 
 <style lang="scss" scoped>
 .download-page {
   display: flex;
-  height: calc(100vh - var(--dl-header-height));
+  flex-direction: column;
+  gap: 16px;
 }
 
-.download-sidebar {
-  width: 200px;
-  flex-shrink: 0;
-  background: var(--color-bg-2);
-  border-right: 1px solid var(--color-border-2);
-
-  :deep(.arco-menu) {
-    height: 100%;
-  }
+.wizard-head {
+  padding: 16px 24px;
 }
 
-.menu-line {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  width: 100%;
-}
-
-.refresh-btn {
-  margin-left: auto;
-  padding: 0 4px;
-  font-size: 14px;
-  color: var(--color-text-3);
-
-  &:hover {
-    color: rgb(var(--primary-6));
-  }
-}
-
-.download-content {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-}
-
-.download-inner {
-  padding: 20px 24px 80px;
+.wizard-body {
+  min-height: 0;
 }
 </style>

@@ -31,7 +31,6 @@ export interface LauncherSettings {
   minimize_to_tray: boolean
   autostart: boolean
   last_instance_id: string | null
-  news_source: string
   theme: ThemeMode
   log_level: LogLevel
   /** SKILL source repos: https://[user:password@]github.com/user/repo[.git][#/path/to/skill] */

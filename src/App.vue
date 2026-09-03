@@ -59,8 +59,11 @@ onMounted(async () => {
 // --- In-app shortcuts (t4/t9): Cmd/Ctrl+1/2/3/4, Cmd+, K/R, Esc --------------
 
 function goShortcut(name: ShortcutRoute) {
-  if (route.name === name) return
-  void router.push({ name }).catch(() => undefined)
+  if (name === 'instances' && route.name === 'instance-edit') return
+  const target =
+    name === 'instances' ? 'instances' : name === 'download' ? 'download-create' : name
+  if (route.name === target) return
+  void router.push({ name: target }).catch(() => undefined)
 }
 
 function refreshShortcut() {
@@ -275,60 +278,108 @@ watch(
   },
 )
 
-const selectedKeys = computed(() => {
+// --- Sidebar navigation -------------------------------------------------------
+
+type NavKey = 'home' | 'instances' | 'plugins' | 'tasks' | 'settings'
+
+const siderCollapsed = ref(localStorage.getItem('dsh-launcher.siderCollapsed') === '1')
+
+function toggleSider() {
+  siderCollapsed.value = !siderCollapsed.value
+  try {
+    localStorage.setItem('dsh-launcher.siderCollapsed', siderCollapsed.value ? '1' : '0')
+  } catch {
+    // Private mode etc: collapse state is best-effort.
+  }
+}
+
+/** Maps every route onto one highlighted sidebar entry. */
+const navSelected = computed<NavKey>(() => {
   const name = route.name as string
-  if (name === 'download' || name?.startsWith('download-')) return ['download']
-  if (name === 'settings') return ['settings']
-  if (name === 'home') return ['home']
-  return []
+  if (name === 'instances' || name === 'instance-edit' || name === 'modpack-export') return 'instances'
+  // The create-instance wizard lives inside 实例管理 (no separate entry).
+  if (name === 'download-create' || name === 'download-name' || name === 'download') return 'instances'
+  if (name === 'download-plugins' || name === 'plugin-version' || name === 'plugin-install') {
+    return 'plugins'
+  }
+  if (name === 'tasks') return 'tasks'
+  if (name === 'settings') return 'settings'
+  return 'home'
 })
 
-const onTasksPage = computed(() => route.name === 'tasks')
-
-const onInstancePage = computed(() => route.name === 'instances' || route.name === 'instance-edit')
-
-const instancePageTitle = computed(() => {
-  if (route.name === 'instances') return t('instances.title')
-  if (route.name === 'instance-edit') {
-    return route.params.id ? t('instanceEdit.titleEdit') : t('instanceEdit.titleNew')
+function navGo(key: NavKey) {
+  switch (key) {
+    case 'home':
+      void router.push({ name: 'home' }).catch(() => undefined)
+      break
+    case 'instances':
+      if (route.name !== 'instances' && route.name !== 'instance-edit') {
+        void router.push({ name: 'instances' }).catch(() => undefined)
+      } else if (route.name !== 'instances') {
+        void router.push({ name: 'instances' }).catch(() => undefined)
+      }
+      break
+    case 'plugins':
+      void router.push({ name: 'download-plugins' }).catch(() => undefined)
+      break
+    case 'tasks':
+      void router.push({ name: 'tasks' }).catch(() => undefined)
+      break
+    case 'settings':
+      void router.push({ name: 'settings' }).catch(() => undefined)
+      break
   }
-  return ''
+}
+
+const runningInstanceCount = computed(
+  () => store.instances.filter((i) => store.statusOf(i.id).state === 'running').length,
+)
+
+/** Slim header title for the current route. */
+const pageTitle = computed(() => {
+  const name = route.name as string
+  switch (name) {
+    case 'home':
+      return t('nav.home')
+    case 'instances':
+      return t('instances.title')
+    case 'instance-edit':
+      return route.params.id ? t('instanceEdit.titleEdit') : t('instanceEdit.titleNew')
+    case 'modpack-export':
+      return t('exportPack.title')
+    case 'download-create':
+    case 'download-name':
+    case 'download':
+      return t('download.createInstance')
+    case 'download-plugins':
+    case 'plugin-version':
+    case 'plugin-install':
+      return t('download.plugins')
+    case 'tasks':
+      return t('tasks.title')
+    case 'settings':
+      return t('settings.title')
+    case 'setup':
+      return t('setup.title')
+    default:
+      return t('app.title')
+  }
+})
+
+/** Wizard-like pages get an explicit back affordance next to the title. */
+const showBack = computed(() => {
+  const name = route.name as string
+  return (
+    name === 'instance-edit' ||
+    name === 'modpack-export' ||
+    name === 'download-name' ||
+    name === 'plugin-version' ||
+    name === 'plugin-install'
+  )
 })
 
 function onHeaderBack() {
-  router.push({ name: 'home' })
-}
-
-function onFabClick() {
-  if (onTasksPage.value) {
-    router.back()
-  } else {
-    router.push({ name: 'tasks' })
-  }
-}
-
-function onMenuSelect(key: string) {
-  router.push({ name: key })
-}
-
-const isHomePage = computed(() => route.name === 'home')
-
-// Header shortcuts (moved from the Home launch panel): instance list +
-// settings for the last-used instance, falling back to the first one.
-const homeEditTargetId = computed(() => {
-  const last = store.settings.last_instance_id
-  if (last && store.instanceById(last)) return last
-  return store.instances[0]?.id
-})
-
-function goInstances() {
-  if (route.name !== 'instances') void router.push({ name: 'instances' }).catch(() => undefined)
-}
-
-function goEditTarget() {
-  if (homeEditTargetId.value) {
-    void router.push({ name: 'instance-edit', params: { id: homeEditTargetId.value } }).catch(() => undefined)
-  }
+  router.back()
 }
 
 const appWindow = (() => {
@@ -341,13 +392,12 @@ async function loadWindowApi() {
   return getCurrentWindow()
 }
 
-
 // Manual drag: native data-tauri-drag-region only works on elements carrying
-// the attribute, which leaves the menu area in the middle undraggable.
+// the attribute, which leaves gaps undraggable.
 async function onHeaderMouseDown(e: MouseEvent) {
   if (!isTauri || e.button !== 0) return
   const el = e.target as HTMLElement | null
-  if (el?.closest('.arco-menu-item, a, button, input, [data-no-drag]')) return
+  if (el?.closest('.nav-item, a, button, input, [data-no-drag]')) return
   const w = await appWindow
   w?.startDragging()
 }
@@ -355,55 +405,106 @@ async function onHeaderMouseDown(e: MouseEvent) {
 
 <template>
   <a-layout class="app-shell">
-    <a-layout-header class="app-header" @mousedown="onHeaderMouseDown">
-      <!-- Brand; dragging is handled manually via onHeaderMouseDown. -->
-      <div v-if="!onInstancePage" class="app-brand">
-        <img src="@/assets/launcher-icon.png" class="app-logo" alt="" />
-        <span class="app-title">{{ t('app.title') }}</span>
-        <a-tag v-if="!isTauri" size="small" color="orange">{{ t('app.mockBadge') }}</a-tag>
+    <aside class="app-sider" :class="{ collapsed: siderCollapsed, 'in-tauri': isTauri }">
+      <div class="sider-brand" @mousedown="onHeaderMouseDown">
+        <img src="@/assets/launcher-icon.png" class="sider-logo" alt="" />
+        <span v-if="!siderCollapsed" class="sider-title">{{ t('app.title') }}</span>
+        <button class="sider-collapse" :title="t('nav.toggleSider')" @click="toggleSider">
+          {{ siderCollapsed ? '»' : '«' }}
+        </button>
       </div>
-      <template v-if="onInstancePage">
-        <div class="header-back">
-          <button class="header-back-btn" @click="onHeaderBack">←</button>
-          <span class="header-back-title">{{ instancePageTitle }}</span>
-        </div>
-      </template>
-      <a-menu
-        v-else
-        mode="horizontal"
-        :selected-keys="selectedKeys"
-        class="app-menu"
-        @menu-item-click="onMenuSelect"
-      >
-        <a-menu-item key="home">{{ t('nav.home') }}</a-menu-item>
-        <a-menu-item key="download">{{ t('nav.download') }}</a-menu-item>
-        <a-menu-item key="settings">{{ t('nav.settings') }}</a-menu-item>
-      </a-menu>
-      <div v-if="isHomePage && !onInstancePage" class="header-actions">
-        <a-button size="small" @click="goInstances">{{ t('home.instanceList') }}</a-button>
-        <a-button size="small" :disabled="!homeEditTargetId" @click="goEditTarget">{{
-          t('home.editSelected')
-        }}</a-button>
-      </div>
-    </a-layout-header>
-    <a-layout-content class="app-content">
-      <a-scrollbar
-        type="track"
-        outer-style="height: 100%"
-        style="height: 100%; overflow-y: auto"
-      >
-        <router-view />
-      </a-scrollbar>
-    </a-layout-content>
 
-    <!-- Floating task manager entry (bottom-right); becomes a back button on the tasks page. -->
-    <div class="task-fab" @click="onFabClick">
-      <a-badge v-if="!onTasksPage" :count="store.runningTaskCount" :dot="store.runningTaskCount > 0">
-        <span class="task-fab-icon">⏱</span>
-      </a-badge>
-      <span v-else class="task-fab-icon">←</span>
-      <span class="task-fab-text">{{ onTasksPage ? t('download.back') : t('tasks.fab') }}</span>
-    </div>
+      <nav class="sider-nav">
+        <button
+          class="nav-item"
+          :class="{ active: navSelected === 'home' }"
+          :title="siderCollapsed ? t('nav.home') : ''"
+          @click="navGo('home')"
+        >
+          <span class="nav-icon">▶</span>
+          <span v-if="!siderCollapsed" class="nav-label">{{ t('nav.home') }}</span>
+        </button>
+        <button
+          class="nav-item"
+          :class="{ active: navSelected === 'instances' }"
+          :title="siderCollapsed ? t('nav.instances') : ''"
+          @click="navGo('instances')"
+        >
+          <span class="nav-icon">🗂</span>
+          <span v-if="!siderCollapsed" class="nav-label">{{ t('nav.instances') }}</span>
+          <a-tag v-if="!siderCollapsed && runningInstanceCount > 0" size="small" color="green">
+            {{ runningInstanceCount }}
+          </a-tag>
+        </button>
+
+        <button
+          class="nav-item"
+          :class="{ active: navSelected === 'plugins' }"
+          :title="siderCollapsed ? t('nav.plugins') : ''"
+          @click="navGo('plugins')"
+        >
+          <span class="nav-icon">🧩</span>
+          <span v-if="!siderCollapsed" class="nav-label">{{ t('nav.plugins') }}</span>
+        </button>
+
+        <button
+          class="nav-item"
+          :class="{ active: navSelected === 'tasks' }"
+          :title="siderCollapsed ? t('nav.tasks') : ''"
+          @click="navGo('tasks')"
+        >
+          <span class="nav-icon">⏱</span>
+          <span v-if="!siderCollapsed" class="nav-label">{{ t('nav.tasks') }}</span>
+          <a-badge
+            v-if="!siderCollapsed && store.runningTaskCount > 0"
+            :count="store.runningTaskCount"
+          />
+          <span v-if="siderCollapsed && store.runningTaskCount > 0" class="nav-dot" />
+        </button>
+        <button
+          class="nav-item"
+          :class="{ active: navSelected === 'settings' }"
+          :title="siderCollapsed ? t('nav.settings') : ''"
+          @click="navGo('settings')"
+        >
+          <span class="nav-icon">⚙</span>
+          <span v-if="!siderCollapsed" class="nav-label">{{ t('nav.settings') }}</span>
+        </button>
+      </nav>
+
+      <div v-if="!siderCollapsed" class="sider-footer">
+        <span v-if="store.runningTaskCount > 0" class="sider-task-hint">
+          {{ t('tasks.runningHint', { count: store.runningTaskCount }) }}
+        </span>
+        <span v-else class="sider-task-idle">{{ t('tasks.idleHint') }}</span>
+      </div>
+    </aside>
+
+    <a-layout class="app-main" :class="{ 'in-tauri': isTauri }">
+      <a-layout-header class="app-header" @mousedown="onHeaderMouseDown">
+        <button v-if="showBack" class="header-back-btn" @click="onHeaderBack">←</button>
+        <span class="header-title">{{ pageTitle }}</span>
+        <a-tag v-if="!isTauri" size="small" color="orange">{{ t('app.mockBadge') }}</a-tag>
+        <span class="header-spacer" />
+        <button
+          class="header-refresh"
+          :title="t('common.refresh')"
+          data-no-drag
+          @click="refreshShortcut"
+        >
+          ⟳
+        </button>
+      </a-layout-header>
+      <a-layout-content class="app-content">
+        <a-scrollbar
+          type="track"
+          outer-style="height: 100%"
+          style="height: 100%; overflow-y: auto"
+        >
+          <router-view />
+        </a-scrollbar>
+      </a-layout-content>
+    </a-layout>
 
     <ModpackImportDialog v-model:visible="modpackImportVisible" :initial-source="modpackImportSource" />
     <PluginFileImportDialog
@@ -417,15 +518,191 @@ async function onHeaderMouseDown(e: MouseEvent) {
 <style lang="scss" scoped>
 .app-shell {
   height: 100%;
+  display: flex;
+  flex-direction: row;
 }
 
-.header-back {
+.app-sider {
+  width: var(--dl-sider-width);
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-bg-2);
+  border-right: 1px solid var(--color-border-2);
+  transition: width 0.15s ease;
+
+  &.collapsed {
+    width: var(--dl-sider-collapsed-width);
+
+    .sider-brand {
+      justify-content: center;
+      padding: 0 8px;
+    }
+
+    .nav-item {
+      justify-content: center;
+      padding: 9px 0;
+    }
+  }
+}
+
+.sider-brand {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
+  height: var(--dl-header-height);
+  padding: 0 12px;
+  border-bottom: 1px solid var(--color-border-2);
+  flex-shrink: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  // Draggable so the window can be moved from the brand area too.
+  -webkit-app-region: drag;
+
+  button {
+    -webkit-app-region: no-drag;
+  }
+}
+
+// TitleBarStyle Overlay puts the traffic lights over the top-left corner:
+// keep the brand clear of them, like the 78px inset on the top header.
+// Browser preview has no traffic lights, so no inset there.
+.in-tauri .sider-brand {
+  padding-left: 78px;
+}
+
+.sider-logo {
+  width: 24px;
+  height: 24px;
+  border-radius: 5px;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.sider-title {
+  font-size: 14px;
+  font-weight: 700;
   flex: 1;
   min-width: 0;
-  height: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sider-collapse {
+  border: none;
+  background: transparent;
+  color: var(--color-text-3);
+  cursor: pointer;
+  border-radius: 6px;
+  padding: 2px 6px;
+  font-size: 13px;
+
+  &:hover {
+    background: var(--color-fill-2);
+    color: rgb(var(--primary-6));
+  }
+}
+
+.sider-nav {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 10px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 10px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--color-text-2);
+  font-size: 13px;
+  cursor: pointer;
+  text-align: left;
+  position: relative;
+
+  &:hover {
+    background: var(--color-fill-2);
+    color: var(--color-text-1);
+  }
+
+  &.active {
+    background: rgb(var(--primary-6) / 10%);
+    color: rgb(var(--primary-6));
+    font-weight: 600;
+  }
+}
+
+.nav-icon {
+  width: 20px;
+  text-align: center;
+  font-size: 15px;
+  flex-shrink: 0;
+}
+
+.nav-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nav-dot {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: rgb(var(--primary-6));
+}
+
+.sider-footer {
+  padding: 10px 12px;
+  border-top: 1px solid var(--color-border-2);
+  font-size: 12px;
+  color: var(--color-text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.app-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.app-content {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.app-header {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 10px;
+  height: var(--dl-header-height);
+  padding: 0 16px;
+  background: var(--color-bg-2);
+  border-bottom: 1px solid var(--color-border-2);
+}
+
+// Browser preview has no traffic lights over the corner; only the desktop
+// build needs the left inset.
+.in-tauri .app-header {
+  padding-left: 78px;
 }
 
 .header-back-btn {
@@ -440,9 +717,6 @@ async function onHeaderMouseDown(e: MouseEvent) {
   border: none;
   border-radius: 6px;
   cursor: pointer;
-  transition:
-    background 0.15s,
-    color 0.15s;
 
   &:hover {
     background: var(--color-fill-2);
@@ -450,7 +724,7 @@ async function onHeaderMouseDown(e: MouseEvent) {
   }
 }
 
-.header-back-title {
+.header-title {
   font-size: 14px;
   font-weight: 600;
   color: var(--color-text-1);
@@ -459,95 +733,26 @@ async function onHeaderMouseDown(e: MouseEvent) {
   text-overflow: ellipsis;
 }
 
-.app-content {
+.header-spacer {
   flex: 1;
-  min-height: 0;
-  overflow: hidden;
 }
 
-.app-header {
-  display: flex;
+.header-refresh {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
   align-items: center;
-  flex-shrink: 0;
-  height: var(--dl-header-height);
-  padding: 0 20px 0 78px;
-  background: var(--color-bg-2);
-  border-bottom: 1px solid var(--color-border-2);
-}
-
-.app-brand {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-right: 32px;
-  white-space: nowrap;
-  height: 100%;
-  cursor: default;
-
-  .app-logo {
-    width: 24px;
-    height: 24px;
-    border-radius: 5px;
-    object-fit: cover;
-  }
-
-  .app-title {
-    font-size: 16px;
-    font-weight: 600;
-  }
-}
-
-.header-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-shrink: 0;
-  margin-left: 12px;
-}
-
-.app-menu {
-  flex: 1;
-  // Keep transparent so the header's border-bottom shows through below the
-  // menu instead of being covered by a menu background.
+  justify-content: center;
+  font-size: 15px;
+  color: var(--color-text-3);
   background: transparent;
-  border-bottom: none;
-
-  :deep(.arco-menu-inner) {
-    background: transparent;
-    border-bottom: none;
-  }
-}
-
-.task-fab {
-  position: fixed;
-  right: 24px;
-  bottom: 24px;
-  z-index: 100;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 18px;
-  background: var(--color-bg-2);
-  border: 1px solid var(--color-border-2);
-  border-radius: 24px;
-  box-shadow: 0 4px 16px rgb(0 0 0 / 12%);
+  border: none;
+  border-radius: 6px;
   cursor: pointer;
-  user-select: none;
-  transition: transform 0.15s, box-shadow 0.15s;
 
   &:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 8px 24px rgb(22 93 255 / 20%);
+    background: var(--color-fill-2);
+    color: rgb(var(--primary-6));
   }
-}
-
-.task-fab-icon {
-  font-size: 18px;
-}
-
-.task-fab-text {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--color-text-1);
 }
 </style>

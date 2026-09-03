@@ -53,9 +53,6 @@ pub struct LauncherSettings {
     pub autostart: bool,
     #[serde(default)]
     pub last_instance_id: Option<String>,
-    /// News feed source: an http(s) URL or a local .md/.html file path.
-    #[serde(default = "default_news_source")]
-    pub news_source: String,
     /// UI theme: "light" | "dark" | "system" (follow the OS setting).
     #[serde(default = "default_theme")]
     pub theme: String,
@@ -99,11 +96,6 @@ fn default_log_level() -> String {
     "info".to_string()
 }
 
-fn default_news_source() -> String {
-    "https://gist.githubusercontent.com/Gu-ZT/f08daa33afb82f4b375e604039b92742/raw/DSH_NEWS.md"
-        .to_string()
-}
-
 fn default_proxy_url() -> String {
     "http://127.0.0.1".to_string()
 }
@@ -123,7 +115,6 @@ impl Default for LauncherSettings {
             minimize_to_tray: default_true(),
             autostart: false,
             last_instance_id: None,
-            news_source: default_news_source(),
             theme: default_theme(),
             log_level: default_log_level(),
             skill_repos: Vec::new(),
@@ -186,8 +177,6 @@ pub struct SettingsPatch {
     #[serde(default)]
     pub last_instance_id: Option<String>,
     #[serde(default)]
-    pub news_source: Option<String>,
-    #[serde(default)]
     pub theme: Option<String>,
     #[serde(default)]
     pub log_level: Option<String>,
@@ -234,7 +223,6 @@ pub fn load_config(path: &Path) -> Config {
                 dedupe_homes(&mut cfg);
                 cleanup_orphan_homes(&mut cfg);
                 ensure_user_dsh_home(&mut cfg);
-                migrate_news_source(&mut cfg);
                 cfg
             }
             Err(err) => {
@@ -245,16 +233,6 @@ pub fn load_config(path: &Path) -> Config {
             }
         },
         Err(_) => Config::default(),
-    }
-}
-
-/// Backfills an empty (previously unset) news_source with the default feed,
-/// so existing users also get the default news URL without being forced to
-/// change a value they explicitly cleared. An explicitly cleared value is
-/// indistinguishable from "never set", so this only runs once when empty.
-fn migrate_news_source(cfg: &mut Config) {
-    if cfg.settings.news_source.trim().is_empty() {
-        cfg.settings.news_source = default_news_source();
     }
 }
 

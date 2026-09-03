@@ -129,21 +129,6 @@ async function onAutostartChange(value: string | number | boolean | Record<strin
   await patchSettings({ autostart: Boolean(value) })
 }
 
-// News source: saved on blur / Enter so typing is not interrupted.
-const newsSource = ref(store.settings.news_source ?? '')
-watch(
-  () => store.settings.news_source,
-  (v) => {
-    if ((v ?? '') !== newsSource.value) newsSource.value = v ?? ''
-  },
-)
-
-async function onNewsSourceSave() {
-  const value = newsSource.value.trim()
-  if (value === (store.settings.news_source ?? '')) return
-  await patchSettings({ news_source: value })
-}
-
 // --- SKILL source repos (issue #10) ---------------------------------------------
 
 const newSkillRepo = ref('')
@@ -205,56 +190,42 @@ async function onProxyFieldsSave() {
   if (Object.keys(patch).length > 0) await patchSettings(patch)
 }
 
-// --- DSH_HOME management ------------------------------------------------------
+// --- Section anchor nav: long page, jump instead of blind scrolling ----------
 
-const newHomeName = ref('')
-const newHomePath = ref('')
-
-async function onPickDir() {
-  if (api.isTauri) {
-    try {
-      const { open } = await import('@tauri-apps/plugin-dialog')
-      const dir = await open({ directory: true, multiple: false })
-      if (typeof dir === 'string') newHomePath.value = dir
-    } catch (e) {
-      Message.error(String(e))
-    }
-  } else {
-    Message.info(t('settings.browserPickHint'))
-  }
-}
-
-async function onAddHome() {
-  try {
-    await api.createHome(newHomeName.value, newHomePath.value)
-    newHomeName.value = ''
-    newHomePath.value = ''
-    await store.refreshHomes()
-    Message.success(t('settings.saved'))
-  } catch (e) {
-    Message.error(String(e))
-  }
-}
-
-async function onRemoveHome(id: string) {
-  try {
-    await api.removeHome(id)
-    await store.refreshHomes()
-  } catch (e) {
-    Message.error(String(e))
-  }
-}
-
-const homeColumns = computed(() => [
-  { title: t('settings.homeName'), dataIndex: 'name', width: 180 },
-  { title: t('settings.homePath'), dataIndex: 'path', ellipsis: true, tooltip: true },
-  { title: t('instances.table.actions'), slotName: 'actions', width: 110, align: 'center' as const },
+const sections = computed(() => [
+  { key: 'general', label: t('settings.general') },
+  { key: 'shortcuts', label: t('settings.shortcuts.title') },
+  { key: 'proxy', label: t('settings.proxy.title') },
+  { key: 'skillRepos', label: t('settings.skillRepos.title') },
+  { key: 'update', label: t('settings.update.title') },
+  { key: 'dataDir', label: t('settings.dataDir.title') },
 ])
+
+const sectionEls = ref<Record<string, HTMLElement | null>>({})
+
+function setSectionRef(key: string, el: unknown) {
+  sectionEls.value[key] = (el as HTMLElement | null) ?? null
+}
+
+function scrollToSection(key: string) {
+  sectionEls.value[key]?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
 </script>
 
 <template>
-  <div class="dl-page">
-    <div class="dl-card">
+  <div class="settings-layout">
+    <aside class="settings-anchor">
+      <button
+        v-for="s in sections"
+        :key="s.key"
+        class="anchor-item"
+        @click="scrollToSection(s.key)"
+      >
+        {{ s.label }}
+      </button>
+    </aside>
+    <div class="dl-page settings-page">
+    <div :ref="(el: unknown) => setSectionRef('general', el)" class="dl-card section-anchor">
       <div class="dl-card-title">
         <h3>{{ t('settings.general') }}</h3>
       </div>
@@ -299,26 +270,16 @@ const homeColumns = computed(() => [
               {{ o.label }}
             </a-option>
           </a-select>
-          <p class="news-source-hint">{{ t('settings.logLevel.hint') }}</p>
-        </a-form-item>
-        <a-form-item :label="t('settings.newsSource')">
-          <a-input
-            v-model="newsSource"
-            :placeholder="t('settings.newsSourcePlaceholder')"
-            allow-clear
-            @blur="onNewsSourceSave"
-            @press-enter="onNewsSourceSave"
-          />
-          <p class="news-source-hint">{{ t('settings.newsSourceHint') }}</p>
+          <p class="settings-hint">{{ t('settings.logLevel.hint') }}</p>
         </a-form-item>
       </a-form>
     </div>
 
-    <div class="dl-card">
+    <div :ref="(el: unknown) => setSectionRef('shortcuts', el)" class="dl-card section-anchor">
       <div class="dl-card-title">
         <h3>{{ t('settings.shortcuts.title') }}</h3>
       </div>
-      <p class="news-source-hint">{{ t('settings.shortcuts.desc') }}</p>
+      <p class="settings-hint">{{ t('settings.shortcuts.desc') }}</p>
       <div class="shortcut-list">
         <div v-for="row in shortcutRows" :key="row.label" class="shortcut-row">
           <span class="shortcut-label">{{ row.label }}<a-tag v-if="row.native" size="small" class="shortcut-native">{{ t('settings.shortcuts.nativeTag') }}</a-tag></span>
@@ -327,10 +288,10 @@ const homeColumns = computed(() => [
           </span>
         </div>
       </div>
-      <p class="news-source-hint">{{ t('settings.shortcuts.note') }}</p>
+      <p class="settings-hint">{{ t('settings.shortcuts.note') }}</p>
     </div>
 
-    <div class="dl-card">
+    <div :ref="(el: unknown) => setSectionRef('proxy', el)" class="dl-card section-anchor">
       <div class="dl-card-title">
         <h3>{{ t('settings.proxy.title') }}</h3>
       </div>
@@ -338,7 +299,7 @@ const homeColumns = computed(() => [
         <a-form-item>
           <a-switch :model-value="store.settings.proxy_enabled" @change="onProxyEnabledChange" />
           <span class="switch-label">{{ t('settings.proxy.enabled') }}</span>
-          <p class="news-source-hint">{{ t('settings.proxy.enabledHint') }}</p>
+          <p class="settings-hint">{{ t('settings.proxy.enabledHint') }}</p>
         </a-form-item>
         <a-form-item :label="t('settings.proxy.url')">
           <a-input
@@ -367,7 +328,7 @@ const homeColumns = computed(() => [
             @blur="onProxyFieldsSave"
             @press-enter="onProxyFieldsSave"
           />
-          <p class="news-source-hint">{{ t('settings.proxy.noProxyHint') }}</p>
+          <p class="settings-hint">{{ t('settings.proxy.noProxyHint') }}</p>
         </a-form-item>
         <a-form-item>
           <a-switch
@@ -376,16 +337,16 @@ const homeColumns = computed(() => [
             @change="onProxyApplyDshChange"
           />
           <span class="switch-label">{{ t('settings.proxy.applyDsh') }}</span>
-          <p class="news-source-hint">{{ t('settings.proxy.applyDshHint') }}</p>
+          <p class="settings-hint">{{ t('settings.proxy.applyDshHint') }}</p>
         </a-form-item>
       </a-form>
     </div>
 
-    <div class="dl-card">
+    <div :ref="(el: unknown) => setSectionRef('skillRepos', el)" class="dl-card section-anchor">
       <div class="dl-card-title">
         <h3>{{ t('settings.skillRepos.title') }}</h3>
       </div>
-      <p class="news-source-hint">{{ t('settings.skillRepos.hint') }}</p>
+      <p class="settings-hint">{{ t('settings.skillRepos.hint') }}</p>
       <div class="skill-repo-add">
         <a-input
           v-model="newSkillRepo"
@@ -414,7 +375,7 @@ const homeColumns = computed(() => [
       </a-list>
     </div>
 
-    <div class="dl-card">
+    <div :ref="(el: unknown) => setSectionRef('update', el)" class="dl-card section-anchor">
       <div class="dl-card-title">
         <h3>{{ t('settings.update.title') }}</h3>
       </div>
@@ -437,7 +398,7 @@ const homeColumns = computed(() => [
           {{ t('settings.update.check') }}
         </a-button>
       </div>
-      <p class="news-source-hint">{{ t('settings.update.channelHint') }}</p>
+      <p class="settings-hint">{{ t('settings.update.channelHint') }}</p>
       <div v-if="updateInfo && !updateInfo.up_to_date" class="update-result">
         <a-alert type="info" :show-icon="true">
           {{ t('settings.update.available', { version: updateInfo.latest }) }}
@@ -453,47 +414,71 @@ const homeColumns = computed(() => [
       </div>
     </div>
 
-    <div class="dl-card">
+    <div :ref="(el: unknown) => setSectionRef('dataDir', el)" class="dl-card section-anchor">
       <div class="dl-card-title">
         <h3>{{ t('settings.dataDir.title') }}</h3>
       </div>
-      <p class="news-source-hint">{{ t('settings.dataDir.hint') }}</p>
+      <p class="settings-hint">{{ t('settings.dataDir.hint') }}</p>
       <div class="update-row">
         <span class="data-dir-path" :title="dataDir">{{ dataDir || t('settings.dataDir.unknown') }}</span>
         <a-button size="small" @click="onOpenDataDir">{{ t('settings.dataDir.open') }}</a-button>
         <a-button size="small" @click="onOpenLauncherLog">{{ t('settings.dataDir.viewLog') }}</a-button>
       </div>
     </div>
-
-    <div class="dl-card">
-      <div class="dl-card-title">
-        <h3>{{ t('settings.homes') }}</h3>
-      </div>
-
-      <div class="home-add-row">
-        <a-input v-model="newHomeName" :placeholder="t('settings.homeNamePlaceholder')" style="width: 200px" />
-        <a-input v-model="newHomePath" :placeholder="t('settings.homePathPlaceholder')" class="home-path-input" />
-        <a-button @click="onPickDir">{{ t('settings.pickDir') }}</a-button>
-        <a-button type="primary" :disabled="!newHomeName.trim() || !newHomePath.trim()" @click="onAddHome">
-          {{ t('settings.addHome') }}
-        </a-button>
-      </div>
-
-      <a-table :columns="homeColumns" :data="store.homes" :pagination="false" row-key="id">
-        <template #actions="{ record }">
-          <a-popconfirm
-            :content="t('settings.confirmDeleteHome', { name: record.name })"
-            @ok="onRemoveHome(record.id)"
-          >
-            <a-button size="small" status="danger">{{ t('settings.deleteHome') }}</a-button>
-          </a-popconfirm>
-        </template>
-      </a-table>
     </div>
   </div>
 </template>
 
 <style lang="scss" scoped>
+.settings-layout {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  max-width: calc(var(--dl-content-max) + 180px);
+  margin: 0 auto;
+  padding: 0 24px 0 0;
+}
+
+.settings-anchor {
+  position: sticky;
+  top: 20px;
+  width: 148px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 20px 0 20px 24px;
+}
+
+.anchor-item {
+  text-align: left;
+  border: none;
+  background: transparent;
+  color: var(--color-text-2);
+  font-size: 13px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+
+  &:hover {
+    background: var(--color-fill-2);
+    color: rgb(var(--primary-6));
+  }
+}
+
+.settings-page {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  padding-left: 0;
+}
+
+.section-anchor {
+  scroll-margin-top: 12px;
+}
 .skill-repo-add {
   display: flex;
   gap: 8px;
@@ -513,20 +498,10 @@ const homeColumns = computed(() => [
   color: var(--color-text-2);
 }
 
-.news-source-hint {
+.settings-hint {
   margin: 6px 0 0;
   font-size: 12px;
   color: var(--color-text-3);
-}
-
-.home-add-row {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 16px;
-}
-
-.home-path-input {
-  flex: 1;
 }
 
 .update-row {
