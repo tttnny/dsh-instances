@@ -23,3 +23,6 @@ Thumbs.db
 
 # AgentTeams runtime state
 .agent-teams/
+
+# Parallel-dev worktrees (untracked, never commit)
+worktrees/
