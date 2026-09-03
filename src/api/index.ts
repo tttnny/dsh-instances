@@ -570,7 +570,9 @@ async function mockCall<T>(cmd: string, args?: Record<string, unknown>): Promise
       // open the running instance URL in a new tab.
       const id = String(args?.id ?? '')
       const url = db.running[id]?.url
-      if (url) window.open(url, '_blank', 'noopener,noreferrer')
+      // 与桌面端 open_instance_window 未就绪报错保持一致。
+      if (!url) fail('实例未在运行或尚未就绪')
+      window.open(url, '_blank', 'noopener,noreferrer')
       return undefined as T
     }
     case 'open_external':

@@ -489,6 +489,8 @@ fn open_instance_from_tray(app: &AppHandle, instance_id: &str) {
             Some(Some(u)) => u,
             _ => return,
         };
+        // 与 open_external 保持一致：先裁空白再做 http(s) 校验。
+        let url = url.trim().to_string();
         if !(url.starts_with("http://") || url.starts_with("https://")) {
             crate::log_warn!("托盘打开实例拒绝非 http(s) 链接: {url}");
             return;
@@ -523,6 +525,8 @@ fn handle_double_click(app: &AppHandle) {
         drop(running);
 
         if let Some(url) = target_url {
+            // 与 open_external 保持一致：先裁空白再做 http(s) 校验。
+            let url = url.trim().to_string();
             if !(url.starts_with("http://") || url.starts_with("https://")) {
                 crate::log_warn!("托盘双击拒绝非 http(s) 链接: {url}");
                 show_launcher(&app);
