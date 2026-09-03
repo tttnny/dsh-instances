@@ -33,8 +33,6 @@ pub struct AppState {
     /// package.json, so concurrent runs against one profile overwrite each
     /// other and only the last plugin survives.
     pub profile_locks: tokio::sync::Mutex<HashMap<String, std::sync::Arc<tokio::sync::Mutex<()>>>>,
-    /// Instance whose webview window was opened/focused most recently.
-    pub last_focused_instance: StdMutex<Option<String>>,
     /// Embedded PTY terminal sessions per instance id.
     pub terminals: tokio::sync::Mutex<HashMap<String, terminal::TerminalSession>>,
 }
@@ -142,7 +140,6 @@ pub fn run() {
                 running: tokio::sync::Mutex::new(HashMap::new()),
                 tasks: tokio::sync::Mutex::new(HashMap::new()),
                 profile_locks: tokio::sync::Mutex::new(HashMap::new()),
-                last_focused_instance: StdMutex::new(None),
                 terminals: tokio::sync::Mutex::new(HashMap::new()),
             });
 

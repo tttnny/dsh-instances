@@ -117,7 +117,8 @@ function copyUrl(url: string) {
   Message.success(t('common.copied'))
 }
 
-async function onOpenWindow(id: string) {
+// Opens the running instance URL in the system browser (new tab in preview).
+async function onOpenBrowser(id: string) {
   try {
     await api.openInstanceWindow(id)
   } catch (e) {
@@ -168,7 +169,7 @@ async function onOpenWindow(id: string) {
             <a-link
               class="status-url"
               :title="store.statusOf(record.id).url!"
-              @click="onOpenWindow(record.id)"
+              @click="onOpenBrowser(record.id)"
             >
               {{ store.statusOf(record.id).url }}
             </a-link>

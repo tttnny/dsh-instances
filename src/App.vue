@@ -226,16 +226,16 @@ async function launchFromDeepLink(u: URL) {
       const profile = u.searchParams.get('profile') || inst.default_profile || 'web'
       await api.startInstance(inst.id, profile)
     }
-    // start_instance returns right after spawn; the web URL (and the window
-    // command's readiness check) only exist once the instance is running.
-    await openWindowWhenReady(inst.id)
+    // start_instance returns right after spawn; the web URL (and the
+    // open-in-browser readiness check) only exist once the instance is running.
+    await openBrowserWhenReady(inst.id)
   } catch (e) {
     Message.error(String(e))
   }
 }
 
-/** Waits for the instance to report `running` with a URL, then opens its window. */
-async function openWindowWhenReady(id: string) {
+/** Waits for the instance to report `running` with a URL, then opens it in the system browser. */
+async function openBrowserWhenReady(id: string) {
   const deadline = Date.now() + 120_000
   for (;;) {
     const st = store.statusOf(id)

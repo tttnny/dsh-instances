@@ -349,7 +349,6 @@ pub async fn start_instance_process(
                 },
             );
             crate::tray::rebuild_tray_menu(&waiter_app).await;
-            crate::windows::close_instance_window(&waiter_app, &waiter_id);
         });
     }
 

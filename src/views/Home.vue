@@ -313,7 +313,8 @@ async function onStop() {
   }
 }
 
-async function onOpenWindow() {
+// Opens the running instance URL in the system browser (new tab in preview).
+async function onOpenBrowser() {
   if (!selectedInstanceId.value) return
   try {
     await api.openInstanceWindow(selectedInstanceId.value)
@@ -349,7 +350,7 @@ function goEditSelected() {
           {{ t(`home.status.${selectedStatus.state}`) }}
         </a-tag>
         <div v-if="running && selectedStatus?.url" class="running-url">
-          <a-link class="url-link" :title="selectedStatus.url" @click="onOpenWindow">
+          <a-link class="url-link" :title="selectedStatus.url" @click="onOpenBrowser">
             {{ selectedStatus.url }}
           </a-link>
           <a-button size="mini" type="text" class="url-copy" @click="copyUrl(selectedStatus.url)">
@@ -413,7 +414,7 @@ function goEditSelected() {
           </a-button>
         </template>
         <template v-else>
-          <a-button type="primary" size="large" long class="launch-button" @click="onOpenWindow">
+          <a-button type="primary" size="large" long class="launch-button" @click="onOpenBrowser">
             <span class="launch-text">{{ t('home.openWindow') }}</span>
             <span class="launch-sub">{{ launchSubtitle }}</span>
           </a-button>

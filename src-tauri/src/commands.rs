@@ -789,7 +789,7 @@ pub async fn list_instance_status(
 
 #[tauri::command]
 pub async fn open_instance_window(
-    app: AppHandle,
+    _app: AppHandle,
     state: State<'_, AppState>,
     id: String,
 ) -> Result<(), String> {
@@ -797,16 +797,8 @@ pub async fn open_instance_window(
     let Some(url) = entry.flatten() else {
         return Err("实例未在运行或尚未就绪".to_string());
     };
-    let name = state
-        .config
-        .lock()
-        .unwrap()
-        .instances
-        .iter()
-        .find(|i| i.id == id)
-        .map(|i| i.name.clone())
-        .unwrap_or_else(|| id.clone());
-    crate::windows::open_instance_window(&app, &id, &name, &url)
+    // 实例页改由系统浏览器承载：复用 open_external 的 http(s) 校验与日志。
+    open_external(url)
 }
 
 // ---------------------------------------------------------------------------

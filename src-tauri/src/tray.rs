@@ -489,16 +489,14 @@ fn open_instance_from_tray(app: &AppHandle, instance_id: &str) {
             Some(Some(u)) => u,
             _ => return,
         };
-        let name = state
-            .config
-            .lock()
-            .unwrap()
-            .instances
-            .iter()
-            .find(|i| i.id == id)
-            .map(|i| i.name.clone())
-            .unwrap_or_else(|| id.clone());
-        let _ = crate::windows::open_instance_window(&app, &id, &name, &url);
+        if !(url.starts_with("http://") || url.starts_with("https://")) {
+            crate::log_warn!("托盘打开实例拒绝非 http(s) 链接: {url}");
+            return;
+        }
+        crate::log_info!("托盘在系统浏览器打开实例 {id}：{url}");
+        if let Err(e) = open::that(&url) {
+            crate::log_warn!("托盘打开实例失败: {e}");
+        }
     });
 }
 
@@ -515,35 +513,25 @@ fn handle_double_click(app: &AppHandle) {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         let state = app.state::<AppState>();
-        // Prefer the profile page the user focused last; fall back to the
-        // single running instance; otherwise just show the launcher.
-        let last = state.last_focused_instance.lock().unwrap().clone();
+        // 仅当唯一运行实例时直达其页面（系统浏览器），否则显示主窗口。
         let running = state.running.lock().await;
-        let target_id = last.filter(|id| running.contains_key(id)).or_else(|| {
-            if running.len() == 1 {
-                running.keys().next().cloned()
-            } else {
-                None
-            }
-        });
-        let target = target_id.and_then(|id| {
-            let entry = running.get(&id)?;
-            let url = entry.url.clone()?;
-            let name = state
-                .config
-                .lock()
-                .unwrap()
-                .instances
-                .iter()
-                .find(|i| i.id == id)
-                .map(|i| i.name.clone())
-                .unwrap_or_else(|| id.clone());
-            Some((id, name, url))
-        });
+        let target_url = if running.len() == 1 {
+            running.values().next().and_then(|e| e.url.clone())
+        } else {
+            None
+        };
         drop(running);
 
-        if let Some((id, name, url)) = target {
-            let _ = crate::windows::open_instance_window(&app, &id, &name, &url);
+        if let Some(url) = target_url {
+            if !(url.starts_with("http://") || url.starts_with("https://")) {
+                crate::log_warn!("托盘双击拒绝非 http(s) 链接: {url}");
+                show_launcher(&app);
+                return;
+            }
+            crate::log_info!("托盘双击在系统浏览器打开 {url}");
+            if open::that(&url).is_err() {
+                show_launcher(&app);
+            }
         } else {
             show_launcher(&app);
         }

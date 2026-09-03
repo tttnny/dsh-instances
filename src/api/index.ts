@@ -566,8 +566,11 @@ async function mockCall<T>(cmd: string, args?: Record<string, unknown>): Promise
       return undefined as T
     }
     case 'open_instance_window': {
-      // Browser preview has no Tauri webview windows; deliberately do NOT
-      // window.open here so the browser never navigates to a profile page.
+      // Browser preview mirrors the desktop behavior (system browser):
+      // open the running instance URL in a new tab.
+      const id = String(args?.id ?? '')
+      const url = db.running[id]?.url
+      if (url) window.open(url, '_blank', 'noopener,noreferrer')
       return undefined as T
     }
     case 'open_external':
