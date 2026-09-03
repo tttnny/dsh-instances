@@ -568,7 +568,7 @@ async function mockCall<T>(cmd: string, args?: Record<string, unknown>): Promise
     case 'read_instance_icon':
       return null as T
     case 'open_instance_terminal':
-      return `DSH ${String(args?.instance_id ?? '')}` as T
+      return `DSH ${String(args?.instanceId ?? args?.instance_id ?? '')}` as T
     case 'list_instance_status':
       return Object.values(db.running) as T
     case 'check_instance_health':
@@ -700,7 +700,7 @@ export const api = {
 
   // External terminal: opens Terminal.app / Ghostty for one instance.
   openInstanceTerminal: (instanceId: string) =>
-    call<string>('open_instance_terminal', { instance_id: instanceId }),
+    call<string>('open_instance_terminal', { instanceId }),
 
 
   async onInstanceStatus(cb: Listener<InstanceStatus>): Promise<() => void> {

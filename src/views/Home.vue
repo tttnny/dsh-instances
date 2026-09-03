@@ -667,9 +667,12 @@ function goManage() {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
   gap: 18px;
+  align-items: stretch;
 }
 
 .instance-card {
+  margin-top: 0 !important;
+  height: 100%;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -925,10 +928,11 @@ function goManage() {
 
 // Bottom Bar
 .card-bottom-bar {
+  margin-top: auto;
   display: flex;
   align-items: center;
   gap: 6px;
-  padding-top: 8px;
+  padding-top: 10px;
   border-top: 1px solid var(--apple-separator);
 
   .flex-spacer {

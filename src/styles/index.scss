@@ -108,6 +108,11 @@ h1, h2, h3, h4, .apple-title {
   }
 }
 
+// Cards inside grid containers must never inherit sequential top margin
+.instance-grid > .dl-card {
+  margin-top: 0 !important;
+}
+
 .dl-card-title {
   display: flex;
   align-items: center;
