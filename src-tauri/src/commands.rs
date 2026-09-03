@@ -984,7 +984,7 @@ pub fn open_instance_terminal(
             .map(|p| p.to_string_lossy().to_string())
             .collect::<Vec<_>>()
             .join(":");
-        format!("export PATH=\"{}:$PATH\"; ", joined)
+        format!("export PATH=\"{}:$PATH\"\n", joined)
     } else {
         String::new()
     };
@@ -994,26 +994,45 @@ pub fn open_instance_terminal(
             env_pairs.push((k.clone(), v.clone()));
         }
     }
-    let exports: String = env_pairs
+    let exports = env_pairs
         .iter()
-        .map(|(k, v)| format!("export {}={}", k, shell_quote(v)))
+        .map(|(k, v)| format!("export {}={}\n", k, shell_quote(v)))
         .collect::<Vec<_>>()
-        .join("; ");
-    let init_cmd = format!("{path_prefix}{exports}; cd {}; clear", shell_quote(&home_str));
+        .join("");
+
+    // Create a dedicated launcher script for this instance's terminal session
+    let scripts_dir = state.data_dir.join("scripts");
+    let _ = std::fs::create_dir_all(&scripts_dir);
+    let term_script = scripts_dir.join(format!("term_{}.sh", instance_id));
+    let shell = shell_program();
+    let script_content = format!(
+        "#!/bin/sh\n\
+        {path_prefix}\
+        {exports}\
+        cd {}\n\
+        clear\n\
+        exec {} -l\n",
+        shell_quote(&home_str),
+        shell
+    );
+    if std::fs::write(&term_script, script_content).is_ok() {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&term_script, std::fs::Permissions::from_mode(0o755));
+        }
+    }
+
     let label = format!("DSH {} ({})", cfg_inst.name, home_str);
 
     if terminal == "ghostty" {
-        // Ghostty: new window running login shell with the env preloaded.
+        // Ghostty on macOS: -na opens a new instance and passes --command to execute the script.
         let status = std::process::Command::new("open")
-            .arg("-a")
+            .arg("-na")
             .arg("Ghostty")
             .arg("--args")
             .arg(format!("--title={label}"))
-            .arg("-e")
-            .arg(shell_program())
-            .arg("-l")
-            .arg("-c")
-            .arg(&init_cmd)
+            .arg(format!("--command={}", term_script.to_string_lossy()))
             .spawn()
             .and_then(|mut c| c.wait());
 
@@ -1028,10 +1047,10 @@ pub fn open_instance_terminal(
             Err(e) => Err(format!("打开 Ghostty 失败: {e}")),
         }
     } else {
-        // Terminal.app: activate brings Terminal to the foreground, do script runs the command.
-        let escaped_cmd = init_cmd.replace('\\', "\\\\").replace('"', "\\\"");
+        // Terminal.app: activate brings Terminal to the foreground, do script runs the launcher script.
+        let escaped_path = term_script.to_string_lossy().replace('\\', "\\\\").replace('"', "\\\"");
         let script = format!(
-            "tell application \"Terminal\"\n    activate\n    do script \"{escaped_cmd}\"\nend tell"
+            "tell application \"Terminal\"\n    activate\n    do script \"exec \\\"{escaped_path}\\\"\"\nend tell"
         );
         let out = std::process::Command::new("osascript")
             .arg("-e")
