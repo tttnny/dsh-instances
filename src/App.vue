@@ -405,9 +405,12 @@ async function onHeaderMouseDown(e: MouseEvent) {
 
 <template>
   <a-layout class="app-shell">
-    <aside class="app-sider" :class="{ collapsed: siderCollapsed, 'in-tauri': isTauri }">
+    <!-- Tauri Overlay 模式下红绿灯悬浮在左上角：单独留一条拖拽栏，
+         下方整排内容整体下移，不再跟红绿灯挤在同一行。 -->
+    <div v-if="isTauri" class="traffic-bar" @mousedown="onHeaderMouseDown" />
+    <div class="app-body">
+    <aside class="app-sider" :class="{ collapsed: siderCollapsed }">
       <div class="sider-brand" @mousedown="onHeaderMouseDown">
-        <img src="@/assets/launcher-icon.png" class="sider-logo" alt="" />
         <span v-if="!siderCollapsed" class="sider-title">{{ t('app.title') }}</span>
         <button class="sider-collapse" :title="t('nav.toggleSider')" @click="toggleSider">
           {{ siderCollapsed ? '»' : '«' }}
@@ -480,7 +483,7 @@ async function onHeaderMouseDown(e: MouseEvent) {
       </div>
     </aside>
 
-    <a-layout class="app-main" :class="{ 'in-tauri': isTauri }">
+    <a-layout class="app-main">
       <a-layout-header class="app-header" @mousedown="onHeaderMouseDown">
         <button v-if="showBack" class="header-back-btn" @click="onHeaderBack">←</button>
         <span class="header-title">{{ pageTitle }}</span>
@@ -505,6 +508,7 @@ async function onHeaderMouseDown(e: MouseEvent) {
         </a-scrollbar>
       </a-layout-content>
     </a-layout>
+    </div>
 
     <ModpackImportDialog v-model:visible="modpackImportVisible" :initial-source="modpackImportSource" />
     <PluginFileImportDialog
@@ -518,6 +522,21 @@ async function onHeaderMouseDown(e: MouseEvent) {
 <style lang="scss" scoped>
 .app-shell {
   height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+// Tauri Overlay 红绿灯独占条：高度盖住悬浮的红绿灯（约 28px 外加
+// 上下呼吸空间），整块可拖拽移动窗口。
+.traffic-bar {
+  height: 38px;
+  flex-shrink: 0;
+  -webkit-app-region: drag;
+}
+
+.app-body {
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: row;
 }
@@ -562,21 +581,6 @@ async function onHeaderMouseDown(e: MouseEvent) {
   button {
     -webkit-app-region: no-drag;
   }
-}
-
-// TitleBarStyle Overlay puts the traffic lights over the top-left corner:
-// keep the brand clear of them, like the 78px inset on the top header.
-// Browser preview has no traffic lights, so no inset there.
-.in-tauri .sider-brand {
-  padding-left: 78px;
-}
-
-.sider-logo {
-  width: 24px;
-  height: 24px;
-  border-radius: 5px;
-  object-fit: cover;
-  flex-shrink: 0;
 }
 
 .sider-title {
@@ -697,12 +701,6 @@ async function onHeaderMouseDown(e: MouseEvent) {
   padding: 0 16px;
   background: var(--color-bg-2);
   border-bottom: 1px solid var(--color-border-2);
-}
-
-// Browser preview has no traffic lights over the corner; only the desktop
-// build needs the left inset.
-.in-tauri .app-header {
-  padding-left: 78px;
 }
 
 .header-back-btn {

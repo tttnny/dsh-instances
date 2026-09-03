@@ -15,12 +15,17 @@ const store = useLauncherStore()
 const modpackImportVisible = ref(false)
 
 const columns = computed(() => [
-  { title: t('instances.table.name'), slotName: 'name', width: 220 },
-  { title: t('instances.table.version'), slotName: 'version', width: 140 },
-  { title: t('instances.table.home'), slotName: 'home', width: 180 },
-  { title: t('instances.table.profile'), slotName: 'profile', width: 120 },
-  { title: t('instances.table.status'), slotName: 'status' },
-  { title: t('instances.table.actions'), slotName: 'actions', width: 200, align: 'center' as const },
+  { title: t('instances.table.name'), slotName: 'name', width: 170 },
+  { title: t('instances.table.version'), slotName: 'version', width: 120 },
+  { title: t('instances.table.home'), slotName: 'home', width: 140 },
+  { title: t('instances.table.profile'), slotName: 'profile', width: 80 },
+  { title: t('instances.table.status'), slotName: 'status', width: 90 },
+  {
+    title: t('instances.table.actions'),
+    slotName: 'actions',
+    width: 190,
+    align: 'center' as const,
+  },
 ])
 
 // --- Instance icons (issue #8): resolved lazily per instance -------------------
@@ -195,58 +200,77 @@ const homeColumns = computed(() => [
         </div>
       </div>
 
-      <a-table :columns="columns" :data="store.instances" :pagination="false" row-key="id">
+      <a-table
+        :columns="columns"
+        :data="store.instances"
+        :pagination="false"
+        row-key="id"
+        :scroll="{ x: 790 }"
+      >
         <template #name="{ record }">
           <span class="inst-name">
             <img v-if="iconMap[record.id]" :src="iconMap[record.id]!" class="inst-icon" alt="" />
             <img v-else src="@/assets/launcher-icon.png" class="inst-icon" alt="" />
-            {{ record.name }}
+            <span class="cell-ellipsis" :title="record.name">{{ record.name }}</span>
           </span>
         </template>
         <template #version="{ record }">
-          {{ store.versionById(record.version_id)?.version ?? record.version_id }}
+          <span
+            class="cell-ellipsis"
+            :title="store.versionById(record.version_id)?.version ?? record.version_id"
+          >
+            {{ store.versionById(record.version_id)?.version ?? record.version_id }}
+          </span>
         </template>
         <template #home="{ record }">
           <a-tooltip :content="store.homeById(record.home_id)?.path">
-            <span>{{ store.homeById(record.home_id)?.name ?? record.home_id }}</span>
+            <span class="cell-ellipsis">{{
+              store.homeById(record.home_id)?.name ?? record.home_id
+            }}</span>
           </a-tooltip>
         </template>
         <template #profile="{ record }">
-          {{ record.last_profile ?? record.default_profile ?? '—' }}
+          <span class="cell-ellipsis" :title="record.last_profile ?? record.default_profile ?? ''">
+            {{ record.last_profile ?? record.default_profile ?? '—' }}
+          </span>
         </template>
         <template #status="{ record }">
-          <a-tag :color="stateColor(store.statusOf(record.id).state)">
-            {{ t(`home.status.${store.statusOf(record.id).state}`) }}
-          </a-tag>
-          <template v-if="store.statusOf(record.id).url">
-            <a-link
-              class="status-url"
-              :title="store.statusOf(record.id).url!"
-              @click="onOpenBrowser(record.id)"
-            >
-              {{ store.statusOf(record.id).url }}
-            </a-link>
-            <a-button size="mini" type="text" @click="copyUrl(store.statusOf(record.id).url!)">
-              {{ t('common.copy') }}
-            </a-button>
-          </template>
+          <div class="status-cell">
+            <a-tag :color="stateColor(store.statusOf(record.id).state)">
+              {{ t(`home.status.${store.statusOf(record.id).state}`) }}
+            </a-tag>
+            <template v-if="store.statusOf(record.id).url">
+              <div class="status-url-row">
+                <a-link
+                  class="status-url"
+                  :title="store.statusOf(record.id).url!"
+                  @click="onOpenBrowser(record.id)"
+                >
+                  {{ store.statusOf(record.id).url }}
+                </a-link>
+                <a-button size="mini" type="text" @click="copyUrl(store.statusOf(record.id).url!)">
+                  {{ t('common.copy') }}
+                </a-button>
+              </div>
+            </template>
+          </div>
         </template>
         <template #actions="{ record }">
-          <a-space>
+          <a-space class="inst-actions" :size="4">
             <a-button
-              size="small"
+              size="mini"
               @click="router.push({ name: 'instance-edit', params: { id: record.id } })"
             >
               {{ t('instances.table.edit') }}
             </a-button>
-            <a-button size="small" @click="openCopy(record)">
+            <a-button size="mini" @click="openCopy(record)">
               {{ t('instances.table.copy') }}
             </a-button>
             <a-popconfirm
               :content="t('instances.confirmDelete', { name: record.name })"
               @ok="onDelete(record.id, record.name)"
             >
-              <a-button size="small" status="danger">{{ t('instances.table.delete') }}</a-button>
+              <a-button size="mini" status="danger">{{ t('instances.table.delete') }}</a-button>
             </a-popconfirm>
           </a-space>
         </template>
@@ -278,7 +302,13 @@ const homeColumns = computed(() => [
         </a-button>
       </div>
 
-      <a-table :columns="homeColumns" :data="store.homes" :pagination="false" row-key="id">
+      <a-table
+        :columns="homeColumns"
+        :data="store.homes"
+        :pagination="false"
+        row-key="id"
+        :scroll="{ x: 640 }"
+      >
         <template #usedBy="{ record }">
           <span class="home-used">{{ t('instances.homeUsedByCount', { count: homeUsedBy(record.id) }) }}</span>
         </template>
@@ -332,6 +362,20 @@ const homeColumns = computed(() => [
   display: inline-flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.cell-ellipsis {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inst-name .cell-ellipsis {
+  flex: 1 1 auto;
 }
 
 .inst-icon {
@@ -342,16 +386,36 @@ const homeColumns = computed(() => [
   flex-shrink: 0;
 }
 
+.status-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  min-width: 0;
+}
+
+.status-url-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  max-width: 100%;
+}
+
 .status-url {
-  margin-left: 8px;
   font-size: 12px;
   // Token-bearing URLs are long; ellipsize inside the table cell and keep
   // the full URL in the hover title / copy button.
-  display: inline-block;
-  max-width: 240px;
-  vertical-align: middle;
+  display: block;
+  flex: 1 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inst-actions {
+  flex-wrap: nowrap;
   white-space: nowrap;
 }
 
@@ -369,6 +433,7 @@ const homeColumns = computed(() => [
 
 .home-add-row {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   margin-bottom: 16px;
 }
