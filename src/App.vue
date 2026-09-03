@@ -311,6 +311,26 @@ function onMenuSelect(key: string) {
   router.push({ name: key })
 }
 
+const isHomePage = computed(() => route.name === 'home')
+
+// Header shortcuts (moved from the Home launch panel): instance list +
+// settings for the last-used instance, falling back to the first one.
+const homeEditTargetId = computed(() => {
+  const last = store.settings.last_instance_id
+  if (last && store.instanceById(last)) return last
+  return store.instances[0]?.id
+})
+
+function goInstances() {
+  if (route.name !== 'instances') void router.push({ name: 'instances' }).catch(() => undefined)
+}
+
+function goEditTarget() {
+  if (homeEditTargetId.value) {
+    void router.push({ name: 'instance-edit', params: { id: homeEditTargetId.value } }).catch(() => undefined)
+  }
+}
+
 const appWindow = (() => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return (window as any)?.__TAURI_INTERNALS__ ? loadWindowApi() : null
@@ -359,6 +379,12 @@ async function onHeaderMouseDown(e: MouseEvent) {
         <a-menu-item key="download">{{ t('nav.download') }}</a-menu-item>
         <a-menu-item key="settings">{{ t('nav.settings') }}</a-menu-item>
       </a-menu>
+      <div v-if="isHomePage && !onInstancePage" class="header-actions">
+        <a-button size="small" @click="goInstances">{{ t('home.instanceList') }}</a-button>
+        <a-button size="small" :disabled="!homeEditTargetId" @click="goEditTarget">{{
+          t('home.editSelected')
+        }}</a-button>
+      </div>
     </a-layout-header>
     <a-layout-content class="app-content">
       <a-scrollbar
@@ -469,6 +495,14 @@ async function onHeaderMouseDown(e: MouseEvent) {
     font-size: 16px;
     font-weight: 600;
   }
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  margin-left: 12px;
 }
 
 .app-menu {

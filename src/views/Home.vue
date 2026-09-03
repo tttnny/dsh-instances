@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { Message, Notification } from '@arco-design/web-vue'
 import { Marked } from 'marked'
@@ -71,7 +70,6 @@ function renderNews(content: string, source: string): string {
   })
 }
 
-const router = useRouter()
 const { t } = useI18n()
 const store = useLauncherStore()
 
@@ -366,11 +364,6 @@ function copyUrl(url: string) {
   Message.success(t('common.copied'))
 }
 
-function goEditSelected() {
-  if (selectedInstanceId.value) {
-    router.push({ name: 'instance-edit', params: { id: selectedInstanceId.value } })
-  }
-}
 </script>
 
 <template>
@@ -473,14 +466,6 @@ function goEditSelected() {
             <span class="launch-text">{{ t('home.restart') }}</span>
           </a-button>
         </template>
-        <div class="mini-actions">
-          <a-button class="mini-button" @click="router.push({ name: 'instances' })">
-            {{ t('home.instanceList') }}
-          </a-button>
-          <a-button class="mini-button" :disabled="!selectedInstance" @click="goEditSelected">
-            {{ t('home.editSelected') }}
-          </a-button>
-        </div>
       </div>
     </aside>
 
@@ -624,16 +609,6 @@ function goEditSelected() {
     flex: 1;
     height: 40px;
   }
-}
-
-.mini-actions {
-  display: flex;
-  gap: 10px;
-  justify-content: center;
-}
-
-.mini-button {
-  flex: 1;
 }
 
 .news-area {
