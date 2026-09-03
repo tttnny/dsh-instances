@@ -6,7 +6,7 @@ Tauri 2 + Vue 3 的 macOS Apple Silicon 桌面启动器：管理多版本 DSH、
 
 - pnpm install 装依赖；pnpm dev 跑浏览器预览（localStorage mock，没有 Rust 后端）；pnpm tauri dev 跑桌面联调。
 - pnpm build 等价于 vue-tsc noEmit 加 vite build；Rust 侧用 cargo check 或 cargo build 快速验证。
-- 打包只在被明确要求时做：本地验证用 pnpm tauri build --bundles app 产出 .app（在 src-tauri target release bundle macos 下），拷到 Downloads 目录覆盖；发版才打 dmg 推到 GitHub release。日常开发只用 dev 验证，绝不打包。
+- 打包分两种：agent 自测可自行 pnpm tauri build --bundles app 产出 .app（在 src-tauri target release bundle macos 下）自己安装验证，需要交付给人时拷到 Downloads 目录覆盖；发版用的 dmg 只在被明确要求时打，推到 GitHub release。日常开发优先 dev 验证。
 - pnpm test:release-notes 跑 ci 目录的 release-notes 测试。
 
 ## 目录
