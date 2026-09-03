@@ -59,10 +59,6 @@ pub struct LauncherSettings {
     /// Runtime log level: "debug" | "info" | "warn" | "error".
     #[serde(default = "default_log_level")]
     pub log_level: String,
-    /// SKILL source repositories (issue #10):
-    /// `https://[user:password@]github.com/user/repo[.git][#/path/to/skill]`.
-    #[serde(default)]
-    pub skill_repos: Vec<String>,
     /// Route the launcher's own HTTP requests through a proxy.
     #[serde(default)]
     pub proxy_enabled: bool,
@@ -78,6 +74,15 @@ pub struct LauncherSettings {
     /// instance's own environment variables (applies on next start).
     #[serde(default)]
     pub proxy_apply_dsh: bool,
+    /// External terminal for instance shells: "system" (Terminal.app) or
+    /// "ghostty". The embedded PTY is gone; the launcher opens a real
+    /// terminal window with DSH_HOME set and cwd at the HOME directory.
+    #[serde(default = "default_terminal")]
+    pub terminal: String,
+}
+
+fn default_terminal() -> String {
+    "system".to_string()
 }
 
 fn default_locale() -> String {
@@ -117,12 +122,12 @@ impl Default for LauncherSettings {
             last_instance_id: None,
             theme: default_theme(),
             log_level: default_log_level(),
-            skill_repos: Vec::new(),
             proxy_enabled: false,
             proxy_url: default_proxy_url(),
             proxy_port: default_proxy_port(),
             no_proxy: default_no_proxy(),
             proxy_apply_dsh: false,
+            terminal: default_terminal(),
         }
     }
 }
@@ -181,8 +186,6 @@ pub struct SettingsPatch {
     #[serde(default)]
     pub log_level: Option<String>,
     #[serde(default)]
-    pub skill_repos: Option<Vec<String>>,
-    #[serde(default)]
     pub proxy_enabled: Option<bool>,
     #[serde(default)]
     pub proxy_url: Option<String>,
@@ -192,6 +195,8 @@ pub struct SettingsPatch {
     pub no_proxy: Option<String>,
     #[serde(default)]
     pub proxy_apply_dsh: Option<bool>,
+    #[serde(default)]
+    pub terminal: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]

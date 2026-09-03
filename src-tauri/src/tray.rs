@@ -16,7 +16,8 @@ const MENU_EMPTY: &str = "empty-hint";
 const MENU_QUICK_SUB: &str = "quick-entries";
 const MENU_QUICK_HOME: &str = "quick::home";
 const MENU_QUICK_INSTANCES: &str = "quick::instances";
-const MENU_QUICK_CREATE: &str = "quick::create";
+const MENU_QUICK_HOMES: &str = "quick::homes";
+const MENU_QUICK_VERSIONS: &str = "quick::versions";
 const MENU_QUICK_TASKS: &str = "quick::tasks";
 const MENU_START_ALL: &str = "start-all";
 const MENU_STOP_ALL: &str = "stop-all";
@@ -59,8 +60,10 @@ pub fn build_tray(app: &AppHandle) -> tauri::Result<()> {
                 show_and_navigate(app, "/");
             } else if id == MENU_QUICK_INSTANCES {
                 show_and_navigate(app, "/instances");
-            } else if id == MENU_QUICK_CREATE {
-                show_and_navigate(app, "/download/create");
+            } else if id == MENU_QUICK_HOMES {
+                show_and_navigate(app, "/homes");
+            } else if id == MENU_QUICK_VERSIONS {
+                show_and_navigate(app, "/versions");
             } else if id == MENU_QUICK_TASKS {
                 show_and_navigate(app, "/tasks");
             } else if id == MENU_START_ALL {
@@ -206,11 +209,12 @@ fn build_menu(app: &AppHandle, running: &[RunningItem]) -> tauri::Result<Menu<ta
     // navigate (event is a no-op until the frontend listens).
     let quick_home = MenuItem::with_id(app, MENU_QUICK_HOME, "回到首页", true, None::<&str>)?;
     let quick_instances =
-        MenuItem::with_id(app, MENU_QUICK_INSTANCES, "实例列表", true, None::<&str>)?;
-    let quick_create = MenuItem::with_id(app, MENU_QUICK_CREATE, "新建实例…", true, None::<&str>)?;
-    let quick_tasks = MenuItem::with_id(app, MENU_QUICK_TASKS, "任务列表", true, None::<&str>)?;
+        MenuItem::with_id(app, MENU_QUICK_INSTANCES, "实例管理", true, None::<&str>)?;
+    let quick_homes = MenuItem::with_id(app, MENU_QUICK_HOMES, "HOME 与 Profile", true, None::<&str>)?;
+    let quick_versions = MenuItem::with_id(app, MENU_QUICK_VERSIONS, "版本", true, None::<&str>)?;
+    let quick_tasks = MenuItem::with_id(app, MENU_QUICK_TASKS, "任务", true, None::<&str>)?;
     let quick_refs: Vec<&dyn IsMenuItem<tauri::Wry>> =
-        vec![&quick_home, &quick_instances, &quick_create, &quick_tasks];
+        vec![&quick_home, &quick_instances, &quick_homes, &quick_versions, &quick_tasks];
     let quick_sub = Submenu::with_id_and_items(app, MENU_QUICK_SUB, "快捷入口", true, &quick_refs)?;
 
     // Running profiles live in a second-level submenu: each instance gets an

@@ -6,13 +6,13 @@ import { Message } from '@arco-design/web-vue'
 import { api } from '@/api'
 import { useLauncherStore } from '@/stores/launcher'
 import type { DshInstance, InstanceState } from '@/api/types'
-import ModpackImportDialog from '@/components/ModpackImportDialog.vue'
+import NewInstanceDialog from '@/components/NewInstanceDialog.vue'
 
 const router = useRouter()
 const { t } = useI18n()
 const store = useLauncherStore()
 
-const modpackImportVisible = ref(false)
+const newVisible = ref(false)
 
 const columns = computed(() => [
   { title: t('instances.table.name'), slotName: 'name', width: 170 },
@@ -130,59 +130,6 @@ async function onOpenBrowser(id: string) {
     Message.error(String(e))
   }
 }
-
-// --- DSH_HOME management (moved here from Settings: a HOME only makes
-// sense next to the instances that use it) ------------------------------------
-
-const newHomeName = ref('')
-const newHomePath = ref('')
-
-/** How many instances reference a HOME (drives the delete guard hint). */
-function homeUsedBy(id: string): number {
-  return store.instances.filter((i) => i.home_id === id).length
-}
-
-async function onPickDir() {
-  if (api.isTauri) {
-    try {
-      const { open } = await import('@tauri-apps/plugin-dialog')
-      const dir = await open({ directory: true, multiple: false })
-      if (typeof dir === 'string') newHomePath.value = dir
-    } catch (e) {
-      Message.error(String(e))
-    }
-  } else {
-    Message.info(t('instances.browserPickHint'))
-  }
-}
-
-async function onAddHome() {
-  try {
-    await api.createHome(newHomeName.value, newHomePath.value)
-    newHomeName.value = ''
-    newHomePath.value = ''
-    await store.refreshHomes()
-    Message.success(t('settings.saved'))
-  } catch (e) {
-    Message.error(String(e))
-  }
-}
-
-async function onRemoveHome(id: string) {
-  try {
-    await api.removeHome(id)
-    await store.refreshHomes()
-  } catch (e) {
-    Message.error(String(e))
-  }
-}
-
-const homeColumns = computed(() => [
-  { title: t('instances.homeName'), dataIndex: 'name', width: 180 },
-  { title: t('instances.homePath'), dataIndex: 'path', ellipsis: true, tooltip: true },
-  { title: t('instances.homeUsedBy'), slotName: 'usedBy', width: 140 },
-  { title: t('instances.table.actions'), slotName: 'actions', width: 110, align: 'center' as const },
-])
 </script>
 
 <template>
@@ -191,10 +138,7 @@ const homeColumns = computed(() => [
       <div class="dl-card-title">
         <h3>{{ t('instances.title') }}</h3>
         <div class="dl-toolbar">
-          <a-button @click="modpackImportVisible = true">
-            {{ t('modpack.importButton') }}
-          </a-button>
-          <a-button type="primary" @click="router.push({ name: 'download-create' })">
+          <a-button type="primary" @click="newVisible = true">
             {{ t('instances.newInstance') }}
           </a-button>
         </div>
@@ -279,52 +223,10 @@ const homeColumns = computed(() => [
             <template #image>
               <div class="empty-title">{{ t('instances.emptyTitle') }}</div>
             </template>
-            <a-button type="primary" @click="router.push({ name: 'download-create' })">
+            <a-button type="primary" @click="newVisible = true">
               {{ t('instances.newInstance') }}
             </a-button>
           </a-empty>
-        </template>
-      </a-table>
-    </div>
-
-    <div class="dl-card">
-      <div class="dl-card-title">
-        <h3>{{ t('instances.homesTitle') }}</h3>
-      </div>
-      <p class="dl-card-desc">{{ t('instances.homesDesc') }}</p>
-
-      <div class="home-add-row">
-        <a-input v-model="newHomeName" :placeholder="t('instances.homeNamePlaceholder')" style="width: 200px" />
-        <a-input v-model="newHomePath" :placeholder="t('instances.homePathPlaceholder')" class="home-path-input" />
-        <a-button @click="onPickDir">{{ t('instances.pickDir') }}</a-button>
-        <a-button type="primary" :disabled="!newHomeName.trim() || !newHomePath.trim()" @click="onAddHome">
-          {{ t('instances.addHome') }}
-        </a-button>
-      </div>
-
-      <a-table
-        :columns="homeColumns"
-        :data="store.homes"
-        :pagination="false"
-        row-key="id"
-        :scroll="{ x: 640 }"
-      >
-        <template #usedBy="{ record }">
-          <span class="home-used">{{ t('instances.homeUsedByCount', { count: homeUsedBy(record.id) }) }}</span>
-        </template>
-        <template #actions="{ record }">
-          <a-popconfirm
-            :content="t('instances.confirmDeleteHome', { name: record.name })"
-            :disabled="homeUsedBy(record.id) > 0"
-            @ok="onRemoveHome(record.id)"
-          >
-            <a-button size="small" status="danger" :disabled="homeUsedBy(record.id) > 0">
-              {{ t('instances.deleteHome') }}
-            </a-button>
-          </a-popconfirm>
-        </template>
-        <template #empty>
-          <a-empty :description="t('instances.homesEmpty')" />
         </template>
       </a-table>
     </div>
@@ -353,7 +255,7 @@ const homeColumns = computed(() => [
       </a-form>
     </a-modal>
 
-    <ModpackImportDialog v-model:visible="modpackImportVisible" />
+    <NewInstanceDialog v-model:visible="newVisible" />
   </div>
 </template>
 
@@ -404,8 +306,6 @@ const homeColumns = computed(() => [
 
 .status-url {
   font-size: 12px;
-  // Token-bearing URLs are long; ellipsize inside the table cell and keep
-  // the full URL in the hover title / copy button.
   display: block;
   flex: 1 1 auto;
   min-width: 0;
@@ -429,22 +329,5 @@ const homeColumns = computed(() => [
   margin: 0;
   font-size: 12px;
   color: var(--color-text-3);
-}
-
-.home-add-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-bottom: 16px;
-}
-
-.home-path-input {
-  flex: 1;
-}
-
-.home-used {
-  font-size: 12px;
-  color: var(--color-text-3);
-  white-space: nowrap;
 }
 </style>

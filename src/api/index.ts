@@ -8,32 +8,17 @@ import type {
   DshHome,
   DshInstance,
   DshVersion,
-  ExportModpackInput,
-  ImportModpackInput,
-  InstallPluginInput,
   InstalledPlugin,
   InstanceStatus,
   LauncherSettings,
   LauncherUpdateInfo,
-  MarketPlugin,
-  McpServer,
-  ModpackManifest,
   NewInstanceInput,
-  RepoSkillInfo,
-  SkillInfo,
-  SkillUpdateInfo,
-  PluginChannel,
-  PluginVersionPage,
   RemoteVersion,
   RuntimeStatus,
   SetPluginsEnabledInput,
-  StartTerminalInput,
   TaskInfo,
   TaskLog,
   TaskProgress,
-  TerminalData,
-  TerminalIpcInput,
-  TerminalStatus,
   UninstallPluginInput,
 } from './types'
 
@@ -51,8 +36,6 @@ interface MockDb {
   instances: DshInstance[]
   settings: LauncherSettings
   running: Record<string, InstanceStatus>
-  /** MCP servers per scope key `<homeId>::<profile|__global__>`. */
-  mcp: Record<string, McpServer[]>
 }
 
 function seedDb(): MockDb {
@@ -92,7 +75,7 @@ function seedDb(): MockDb {
       last_instance_id: 'i-main',
       theme: 'system',
       log_level: 'info',
-      skill_repos: ['https://github.com/Gu-ZT/skills'],
+      terminal: 'system',
       proxy_enabled: false,
       proxy_url: 'http://127.0.0.1',
       proxy_port: 7890,
@@ -100,7 +83,6 @@ function seedDb(): MockDb {
       proxy_apply_dsh: false,
     },
     running: {},
-    mcp: {},
   }
 }
 
@@ -116,7 +98,7 @@ function loadDb(): MockDb {
       db.settings.proxy_port = db.settings.proxy_port ?? 7890
       db.settings.no_proxy = db.settings.no_proxy ?? '127.0.0.1,localhost,::1'
       db.settings.proxy_apply_dsh = db.settings.proxy_apply_dsh ?? false
-      db.mcp = db.mcp ?? {}
+      db.settings.terminal = db.settings.terminal ?? 'system'
       return db
     }
   } catch {
@@ -135,19 +117,11 @@ function uuid(): string {
   return 'xxxxxxxx-xxxx-4xxx'.replace(/x/g, () => ((Math.random() * 16) | 0).toString(16))
 }
 
-/** Mock scope key for MCP servers: the HOME plus the profile (or global). */
-function mcpScopeKey(args?: Record<string, unknown>): string {
-  const profile = (args?.profile as string | null | undefined) ?? '__global__'
-  return `${String(args?.homeId ?? '')}::${profile}`
-}
-
 // Simple event emitter used by the mock to mimic Tauri events.
 type Listener<T> = (payload: T) => void
 const statusListeners = new Set<Listener<InstanceStatus>>()
 const taskProgressListeners = new Set<Listener<TaskProgress>>()
 const taskLogListeners = new Set<Listener<TaskLog>>()
-const terminalDataListeners = new Set<Listener<TerminalData>>()
-const terminalStatusListeners = new Set<Listener<TerminalStatus>>()
 
 function emitStatus(s: InstanceStatus) {
   statusListeners.forEach((fn) => fn(s))
@@ -586,12 +560,6 @@ async function mockCall<T>(cmd: string, args?: Record<string, unknown>): Promise
       return 'C:\\Users\\Administrator\\AppData\\Roaming\\in.dsh-plug.dsh-launcher' as T
     case 'get_launcher_directory':
       return 'C:\\Users\\Administrator\\AppData\\Roaming\\in.dsh-plug.dsh-launcher' as T
-    case 'export_modpack': {
-      const input = args?.input as { out_file?: string } | undefined
-      return String(input?.out_file ?? './profile-1.0.0.dspack') as T
-    }
-    case 'start_import_modpack_task':
-      return 'task-mock-modpack' as T
     case 'pending_deep_link':
       return null as T
     case 'set_instance_icon':
@@ -599,94 +567,8 @@ async function mockCall<T>(cmd: string, args?: Record<string, unknown>): Promise
       return undefined as T
     case 'read_instance_icon':
       return null as T
-    case 'list_instance_skills':
-      return [
-        {
-          name: 'conventional-commits',
-          description: 'Conventional Commits 提交规范',
-          kind: 'dir',
-          origin: {
-            repo: 'https://github.com/Gu-ZT/skills#/conventional-commits',
-            commit: '0123456789abcdef0123456789abcdef01234567',
-            tag: null,
-          },
-        },
-      ] as T
-    case 'install_skill_repo':
-      return ['conventional-commits'] as T
-    case 'list_repo_skills':
-      return [
-        {
-          name: 'conventional-commits',
-          description: 'Conventional Commits 提交规范',
-          subpath: 'conventional-commits',
-        },
-        {
-          name: 'minecraft-modder-neoforge',
-          description: '提供 Minecraft 模组开发辅助。默认使用 NeoForge 26.1.2 和 Minecraft 26.1.2。',
-          subpath: 'minecraft-modder-neoforge',
-        },
-      ] as T
-    case 'check_skill_updates':
-      return [
-        { name: 'conventional-commits', current: '0123456', latest: '89abcde' },
-      ] as T
-    case 'import_skill_zip':
-      return ['my-skill'] as T
-    case 'update_skill':
-      return 'v1.0.0' as T
-    case 'delete_skill':
-      return undefined as T
-    case 'import_skill_file':
-    case 'create_skill':
-      return 'my-skill' as T
-    // ---- MCP servers (browser preview keeps them in the mock db) ----
-    case 'list_mcp_servers':
-      return (db.mcp[mcpScopeKey(args)] ?? []) as T
-    case 'save_mcp_server': {
-      const key = mcpScopeKey(args)
-      const list = [...(db.mcp[key] ?? [])]
-      const server = { ...(args?.server as McpServer) }
-      const originalId = String(args?.originalId ?? '')
-      const index = originalId ? list.findIndex((s) => s.id === originalId) : -1
-      const taken = list.filter((_, i) => i !== index).map((s) => s.id)
-      server.id = taken.includes(`mcp-${server.serverName}`)
-        ? `mcp-${server.serverName}-2`
-        : `mcp-${server.serverName}`
-      if (index >= 0) list[index] = server
-      else list.push(server)
-      db.mcp[key] = list
-      saveDb(db)
-      return list as T
-    }
-    case 'delete_mcp_server': {
-      const key = mcpScopeKey(args)
-      db.mcp[key] = (db.mcp[key] ?? []).filter((s) => s.id !== String(args?.id))
-      saveDb(db)
-      return db.mcp[key] as T
-    }
-    case 'read_modpack_manifest':
-      return {
-        manifestVersion: 4,
-        type: 'profile',
-        name: 'all-about-whales',
-        displayName: { 'en-US': 'All About Whales', 'zh-CN': '大肥鱼套装' },
-        version: '1.0.0',
-        description: '',
-        author: 'hxh230802',
-        dshVersion: '0.1.1-rc.2',
-        profileName: 'all-about-whales',
-        bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app'],
-        dependencies: { 'dsh-pet': '0.2.0' },
-        files: [
-          {
-            path: 'data/models/whale-onboard.bin',
-            sha256: 'abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789',
-            size: 5242880,
-            urls: ['https://example.com/whale-onboard.bin'],
-          },
-        ],
-      } as T
+    case 'open_instance_terminal':
+      return `DSH ${String(args?.instance_id ?? '')}` as T
     case 'list_instance_status':
       return Object.values(db.running) as T
     case 'check_instance_health':
@@ -716,163 +598,6 @@ async function mockCall<T>(cmd: string, args?: Record<string, unknown>): Promise
         url: dev ? 'https://github.com/dsh-plugins/dsh-launcher/releases' : null,
         published_at: dev ? new Date().toISOString() : null,
       } as T
-    }
-    // ---- Plugin marketplace mocks (browser preview) ----
-    case 'fetch_plugin_market': {
-      const q = ((args?.query as string) ?? '').trim().toLowerCase()
-      const all: MarketPlugin[] = [
-        {
-          id: '@dsh-plugin/dsh-approve-for-me',
-          name: 'DSH Approve For Me',
-          source: 'dsh-plugins',
-          description: [{ language: 'zh-CN', content: '审查并自动批准命令执行，新增「替我同意」沙箱权限选项' }],
-          urls: {
-            homepage: 'https://github.com/dsh-plugins/dsh-approve-for-me',
-            repository: 'https://github.com/dsh-plugins/dsh-approve-for-me',
-            issues: 'https://github.com/dsh-plugins/dsh-approve-for-me/issues',
-          },
-          relationship: [{ kind: 'dependency', id: '@dsh-plugin/dsh-loader', versions: '>=1.3.0' }],
-        },
-        {
-          id: '@dsh-plugin/dsh-auxiliary',
-          name: 'DSH Auxiliary',
-          source: 'dsh-plugins',
-          description: [{ language: 'zh-CN', content: '辅助工具集：图像描述、任务看板等' }],
-          urls: {
-            repository: 'https://github.com/dsh-plugins/dsh-auxiliary',
-            issues: 'https://github.com/dsh-plugins/dsh-auxiliary/issues',
-          },
-          relationship: [{ kind: 'dependency', id: '@dsh-plugin/dsh-loader', versions: '>=1.3.0' }],
-        },
-        {
-          id: '@dsh-plugin/dsh-loader',
-          name: 'DSH Loader',
-          source: 'dsh-plugins',
-          description: [{ language: 'zh-CN', content: 'DSH 插件加载器，所有插件的基础' }],
-          urls: { repository: 'https://github.com/dsh-plugins/dsh-loader' },
-        },
-        {
-          id: '@furongjun1999/dsh-memory',
-          name: 'dsh-memory',
-          source: 'awesome-dsh-plugin',
-          category: 'agi',
-          stars: 35,
-          downloads: 1856,
-          description: [
-            { language: 'en', content: 'White-box AGI architecture exploration.' },
-            { language: 'zh', content: '白箱AGI架构探索：元认知、持续学习、世界模型。' },
-          ],
-          urls: { repository: 'https://github.com/FuRongJun-1999/dsh-memory' },
-        },
-        {
-          id: 'github:0imzero/dsh-workspace-menu',
-          name: 'dsh-workspace-menu',
-          source: 'awesome-dsh-plugin',
-          category: 'ui',
-          description: [
-            { language: 'en', content: 'Workspace/chat context menu for the DSH home page.' },
-            { language: 'zh', content: 'DSH 主页工作区/会话增强菜单。' },
-          ],
-          urls: { repository: 'https://github.com/0imzero/dsh-workspace-menu' },
-        },
-      ]
-      if (!q) return all as T
-      return all.filter((p) => {
-        const desc = Array.isArray(p.description)
-          ? p.description.map((d) => d.content).join(' ')
-          : (p.description ?? '')
-        return (p.id + p.name + desc).toLowerCase().includes(q)
-      }) as T
-    }
-    case 'fetch_plugin_versions': {
-      const pluginId = args?.plugin_id as string
-      const channel = args?.channel as PluginChannel
-      const page = (args?.page as number) ?? 1
-      if (channel === 'alpha') {
-        // Simulate pagination: each page yields 2 fake commits; 3 pages total.
-        const totalPages = 3
-        const per = 2
-        const start = (page - 1) * per
-        const items = [
-          { version: 'abc1234def5678', label: '2026-04-10 · fix: something', published_at: '2026-04-10' },
-          { version: 'bbb2222ccc3333', label: '2026-04-09 · feat: another', published_at: '2026-04-09' },
-          { version: 'ccc3333ddd4444', label: '2026-04-08 · chore: deps', published_at: '2026-04-08' },
-          { version: 'ddd4444eee5555', label: '2026-04-07 · fix: typo', published_at: '2026-04-07' },
-          { version: 'eee5555fff6666', label: '2026-04-06 · feat: api', published_at: '2026-04-06' },
-          { version: 'fff6666aaa1111', label: '2026-04-05 · docs: readme', published_at: '2026-04-05' },
-        ]
-        const slice = items.slice(start, start + per)
-        return {
-          versions: slice.map((c, i) => ({
-            version: c.version,
-            channel: 'alpha',
-            label: c.label,
-            published_at: c.published_at,
-            is_default: page === 1 && i === 0,
-          })),
-          has_more: page < totalPages,
-        } as T
-      }
-      void pluginId
-      if (channel === 'beta') {
-        return {
-          versions: [
-            { version: '0.4.0-next.1', channel: 'beta', label: '2026-04-08', published_at: '2026-04-08', is_default: true },
-            { version: '0.4.0-next.0', channel: 'beta', label: '2026-04-01', published_at: '2026-04-01', is_default: false },
-          ],
-          has_more: false,
-        } as T
-      }
-      return {
-        versions: [
-          { version: '1.3.0', channel: 'stable', label: '2026-04-05', published_at: '2026-04-05', is_default: true },
-          { version: '1.2.0', channel: 'stable', label: '2026-03-20', published_at: '2026-03-20', is_default: false },
-        ],
-        has_more: false,
-      } as T
-    }
-    case 'list_installed_plugins': {
-      return [
-        { id: '@dsh-plugin/dsh-auxiliary', version: '^0.4.1', enabled: true, cordis_id: 'dsh-auxiliary' },
-        { id: '@dsh-plugin/dsh-thought-buddy', version: '^0.3.1', enabled: false, cordis_id: 'dsh-thought-buddy' },
-      ] as T
-    }
-    case 'set_plugins_enabled':
-      return undefined as T
-    case 'uninstall_plugin':
-      return undefined as T
-    case 'start_terminal_session': {
-      const input = args?.input as StartTerminalInput
-      return {
-        instanceId: input.instanceId,
-        running: true,
-        exitCode: null,
-      } as T
-    }
-    case 'write_terminal_input':
-    case 'resize_terminal_session':
-    case 'close_terminal_session':
-      return undefined as T
-    case 'start_install_plugin_file_task':
-      return 'task-mock-plugin-file' as T
-    case 'start_install_plugin_task': {
-      const input = args?.input as InstallPluginInput
-      const id = mockNewId('t')
-      const task: TaskInfo = {
-        id,
-        kind: 'install-plugin',
-        label: `安装插件 ${input.pluginId}@${input.version}`,
-        version: input.version,
-        state: 'done',
-        percent: 100,
-        created_at: Date.now(),
-        message: null,
-        instance_id: input.instanceId,
-        instance_name: null,
-        logs: [`mock install ${input.pluginId}@${input.version}`],
-      }
-      mockTasks.set(id, task)
-      return id as T
     }
     default:
       fail(`mock: unknown command ${cmd}`)
@@ -927,51 +652,8 @@ export const api = {
   clearInstanceIcon: (instanceId: string) => call<void>('clear_instance_icon', { instanceId }),
   /** Resolves the displayable icon (URL or data URL); null = launcher default. */
   readInstanceIcon: (instanceId: string) => call<string | null>('read_instance_icon', { instanceId }),
-  /** Lists skills in an instance HOME's skills directory. */
-  listInstanceSkills: (homeId: string) => call<SkillInfo[]>('list_instance_skills', { homeId }),
-  /** Installs skill(s) from a source repo URL; resolves to installed skill names. */
-  installSkillRepo: (homeId: string, url: string) =>
-    call<string[]>('install_skill_repo', { homeId, url }),
-  /** Lists the skills a source repo offers (for the install picker). */
-  listRepoSkills: (url: string) => call<RepoSkillInfo[]>('list_repo_skills', { url }),
-  /** Compares recorded commits with remote HEADs; resolves to outdated skills. */
-  checkSkillUpdates: (homeId: string) => call<SkillUpdateInfo[]>('check_skill_updates', { homeId }),
-  /** Imports skills from a ZIP (root SKILL.md or top-level dirs with SKILL.md). */
-  importSkillZip: (homeId: string, path: string) =>
-    call<string[]>('import_skill_zip', { homeId, path }),
-  /** Reinstalls a repo-sourced skill from its origin; resolves to the new version. */
-  updateSkill: (homeId: string, name: string) => call<string>('update_skill', { homeId, name }),
-  deleteSkill: (homeId: string, name: string) => call<void>('delete_skill', { homeId, name }),
-  /** Imports a local SKILL.md into the HOME. */
-  importSkillFile: (homeId: string, path: string) =>
-    call<string>('import_skill_file', { homeId, path }),
-  /** Creates a skill from pasted content (frontmatter auto-added when missing). */
-  createSkill: (homeId: string, name: string, description: string, content: string) =>
-    call<string>('create_skill', { homeId, name, description, content }),
-  /**
-   * MCP servers of one scope: `profile: null` reads `<HOME>/cordis.patch.yml`,
-   * a profile name reads `<HOME>/profiles/<profile>/cordis.patch.yml`.
-   */
-  listMcpServers: (homeId: string, profile: string | null) =>
-    call<McpServer[]>('list_mcp_servers', { homeId, profile }),
-  /**
-   * Creates or updates one MCP server; `originalId` names the row being edited
-   * (null when adding). Rejects before writing when validation fails, and
-   * resolves to the scope's servers as re-read from disk.
-   */
-  saveMcpServer: (homeId: string, profile: string | null, server: McpServer, originalId: string | null) =>
-    call<McpServer[]>('save_mcp_server', { homeId, profile, server, originalId }),
-  /** Deletes one MCP server row; resolves to the scope's remaining servers. */
-  deleteMcpServer: (homeId: string, profile: string | null, id: string) =>
-    call<McpServer[]>('delete_mcp_server', { homeId, profile, id }),
-  exportModpack: (input: ExportModpackInput) => call<string>('export_modpack', { input }),
-  /** Pre-reads a modpack's manifest before installing (for the confirm dialog). */
-  readModpackManifest: (source: string) => call<ModpackManifest>('read_modpack_manifest', { source }),
   /** Cold-start deep link from process argv (null when launched normally). */
   pendingDeepLink: () => call<string | null>('pending_deep_link'),
-  /** Imports a modpack (.dspack / legacy .tgz path or URL) as a background task creating a new instance. */
-  startImportModpackTask: (input: ImportModpackInput) =>
-    call<string>('start_import_modpack_task', { input }),
 
   startInstance: (id: string, profile: string) => call<void>('start_instance', { id, profile }),
   checkInstanceHealth: (instanceId: string, profile: string) =>
@@ -1010,46 +692,16 @@ export const api = {
     return '0.2.0-dev.1'
   },
 
-  // Plugin marketplace
-  fetchPluginMarket: (query?: string) => call<MarketPlugin[]>('fetch_plugin_market', { query: query ?? null }),
-  fetchPluginVersions: (pluginId: string, channel: PluginChannel, page = 1) =>
-    call<PluginVersionPage>('fetch_plugin_versions', { plugin_id: pluginId, channel, page }),
-  listInstalledPlugins: (instanceId: string, profile: string) =>
-    call<InstalledPlugin[]>('list_installed_plugins', { instance_id: instanceId, profile }),
+  // Profile plugins (scoped by HOME + profile): list / enable / disable / uninstall.
+  listInstalledPlugins: (homeId: string, profile: string) =>
+    call<InstalledPlugin[]>('list_installed_plugins', { home_id: homeId, profile }),
   setPluginsEnabled: (input: SetPluginsEnabledInput) => call<void>('set_plugins_enabled', { input }),
   uninstallPlugin: (input: UninstallPluginInput) => call<void>('uninstall_plugin', { input }),
-  startInstallPluginTask: (input: InstallPluginInput) => call<string>('start_install_plugin_task', { input }),
-  /** Installs a plugin from a local .tgz tarball (file picker / drag-drop). */
-  startInstallPluginFileTask: (instanceId: string, profile: string, path: string) =>
-    call<string>('start_install_plugin_file_task', { instance_id: instanceId, profile, path }),
 
-  // Embedded terminal (PTY session)
-  startTerminalSession: (input: StartTerminalInput) =>
-    call<TerminalStatus>('start_terminal_session', { input }),
-  writeTerminalInput: (input: TerminalIpcInput) =>
-    call<void>('write_terminal_input', { input }),
-  resizeTerminalSession: (input: TerminalIpcInput) =>
-    call<void>('resize_terminal_session', { input }),
-  closeTerminalSession: (input: TerminalIpcInput) =>
-    call<void>('close_terminal_session', { input }),
-  async onTerminalData(cb: Listener<TerminalData>): Promise<() => void> {
-    if (isTauri) {
-      const { listen } = await import('@tauri-apps/api/event')
-      const un = await listen<TerminalData>('terminal://data', (e) => cb(e.payload))
-      return un
-    }
-    terminalDataListeners.add(cb)
-    return () => terminalDataListeners.delete(cb)
-  },
-  async onTerminalStatus(cb: Listener<TerminalStatus>): Promise<() => void> {
-    if (isTauri) {
-      const { listen } = await import('@tauri-apps/api/event')
-      const un = await listen<TerminalStatus>('terminal://status', (e) => cb(e.payload))
-      return un
-    }
-    terminalStatusListeners.add(cb)
-    return () => terminalStatusListeners.delete(cb)
-  },
+  // External terminal: opens Terminal.app / Ghostty for one instance.
+  openInstanceTerminal: (instanceId: string) =>
+    call<string>('open_instance_terminal', { instance_id: instanceId }),
+
 
   async onInstanceStatus(cb: Listener<InstanceStatus>): Promise<() => void> {
     if (isTauri) {

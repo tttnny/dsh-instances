@@ -863,13 +863,6 @@ pub fn update_settings(
             None => return Err(format!("无效的日志等级: {v}")),
         }
     }
-    if let Some(v) = settings.skill_repos {
-        cfg.settings.skill_repos = v
-            .into_iter()
-            .map(|u| u.trim().to_string())
-            .filter(|u| !u.is_empty())
-            .collect();
-    }
     if let Some(v) = settings.proxy_enabled {
         cfg.settings.proxy_enabled = v;
     }
@@ -887,6 +880,12 @@ pub fn update_settings(
     }
     if let Some(v) = settings.proxy_apply_dsh {
         cfg.settings.proxy_apply_dsh = v;
+    }
+    if let Some(v) = settings.terminal {
+        match v.as_str() {
+            "system" | "ghostty" => cfg.settings.terminal = v,
+            _ => return Err(format!("无效的终端: {v}")),
+        }
     }
     crate::proxy::sync_from_settings(&cfg.settings);
     let out = cfg.settings.clone();
@@ -909,6 +908,96 @@ pub fn open_external(url: String) -> Result<(), String> {
     }
     crate::log_info!("在系统浏览器打开 {url}");
     open::that(&url).map_err(|e| format!("打开链接失败: {e}"))
+}
+
+/// Opens an external terminal (Terminal.app or Ghostty per settings) for one
+/// instance: cwd at the instance's DSH_HOME, DSH_HOME and
+/// DSH_LAUNCHER_INSTANCE injected, plus the instance's env overrides.
+#[tauri::command]
+pub fn open_instance_terminal(
+    state: State<'_, AppState>,
+    instance_id: String,
+) -> Result<String, String> {
+    let (cfg_home, cfg_inst) = {
+        let cfg = state.config.lock().unwrap();
+        let inst = cfg
+            .instances
+            .iter()
+            .find(|i| i.id == instance_id)
+            .cloned()
+            .ok_or_else(|| "实例不存在".to_string())?;
+        let home = cfg
+            .homes
+            .iter()
+            .find(|h| h.id == inst.home_id)
+            .cloned()
+            .ok_or_else(|| "DSH_HOME 不存在".to_string())?;
+        (home, inst)
+    };
+    let terminal = state.config.lock().unwrap().settings.terminal.clone();
+    std::fs::create_dir_all(&cfg_home.path).map_err(|e| format!("创建 HOME 目录失败: {e}"))?;
+    let home_str = cfg_home.path.to_string_lossy().to_string();
+    let mut env_pairs: Vec<(String, String)> = vec![
+        ("DSH_HOME".to_string(), home_str.clone()),
+        ("DSH_LAUNCHER_INSTANCE".to_string(), cfg_inst.name.clone()),
+    ];
+    for (k, v) in &cfg_inst.env_overrides {
+        if k != "DSH_HOME" {
+            env_pairs.push((k.clone(), v.clone()));
+        }
+    }
+    let exports: String = env_pairs
+        .iter()
+        .map(|(k, v)| format!("export {}={}", k, shell_quote(v)))
+        .collect::<Vec<_>>()
+        .join("; ");
+    let init_cmd = format!("{exports}; cd {}; clear", shell_quote(&home_str));
+    let label = format!("DSH {} ({})", cfg_inst.name, home_str);
+    if terminal == "ghostty" {
+        // Ghostty: new window running login shell with the env preloaded.
+        let status = std::process::Command::new("open")
+            .arg("-a")
+            .arg("Ghostty")
+            .arg("--args")
+            .arg(format!("--title={label}"))
+            .arg("-e")
+            .arg(shell_program())
+            .arg("-l")
+            .arg("-c")
+            .arg(&init_cmd)
+            .spawn()
+            .and_then(|mut c| c.wait());
+        match status {
+            Ok(_) => Ok(label),
+            Err(e) => Err(format!("打开 Ghostty 失败: {e}")),
+        }
+    } else {
+        // Terminal.app: do script opens a new window running the init command.
+        let script = format!("tell application \"Terminal\" to do script \"{init_cmd}\"");
+        let out = std::process::Command::new("osascript")
+            .arg("-e")
+            .arg(&script)
+            .output()
+            .map_err(|e| format!("打开终端失败: {e}"))?;
+        if out.status.success() {
+            Ok(label)
+        } else {
+            Err(format!(
+                "打开终端失败: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            ))
+        }
+    }
+}
+
+/// The login shell for spawned terminals: $SHELL or /bin/zsh.
+fn shell_program() -> String {
+    std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string())
+}
+
+/// Single-quote a value for sh -c / do-script embedding.
+fn shell_quote(v: &str) -> String {
+    format!("'{}'", v.replace('\'', "'\\''"))
 }
 
 /// Opens the file manager at a log file with the file selected (Windows

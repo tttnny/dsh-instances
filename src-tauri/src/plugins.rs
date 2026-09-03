@@ -1,18 +1,10 @@
-// Plugin marketplace: fetches the plugin catalog from the market API and
-// exposes per-channel versions (stable = releases/latest, beta =
-// pre-releases/next, alpha = latest commit) plus install/enable plumbing.
+// Profile plugins: per-instance/profile enable / disable / uninstall plumbing
+// over the profile manifest (package.json) and cordis.patch.yml, driven
+// through the instance's own `dsh plugin` CLI.
 
-use crate::config::{new_id, DshInstance};
 use crate::AppState;
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Manager, State};
-
-/// Market API endpoint (dsh-plugins.github.io publishes to the custom domain).
-const MARKET_URL: &str = "https://dsh-plug.in/api/plugins.json";
-/// The community catalog (awesome-dsh-plugin.com), a different schema keyed by
-/// an `install` command line; see `parse_awesome_install`.
-const AWESOME_URL: &str = "https://awesome-dsh-plugin.com/plugins.json";
-const NPM_REGISTRY: &str = "https://registry.npmjs.org";
+use tauri::State;
 
 /// Public OAuth App client id used to boost unauthenticated GitHub API quota
 /// from 60 to 5000 requests/hour (an anonymous client-id parameter, no
@@ -25,291 +17,6 @@ const GITHUB_CLIENT_ID: &str = "Ov23li6vtlVd83282YL6";
 pub(crate) fn github_api_url(path: &str) -> String {
     let sep = if path.contains('?') { '&' } else { '?' };
     format!("https://api.github.com{path}{sep}client_id={GITHUB_CLIENT_ID}")
-}
-
-// ---------------------------------------------------------------------------
-// Market catalog
-// ---------------------------------------------------------------------------
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct MarketPluginDescription {
-    pub language: String,
-    pub content: String,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct MarketPluginUrls {
-    #[serde(default)]
-    pub homepage: Option<String>,
-    #[serde(default)]
-    pub repository: Option<String>,
-    #[serde(default)]
-    pub issues: Option<String>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct MarketPluginRelationship {
-    /// The market JSON uses `type`; we expose it to the frontend as `kind`.
-    #[serde(alias = "type")]
-    pub kind: String,
-    pub id: String,
-    pub versions: String,
-}
-
-/// description can be a plain string or a localized list; normalise both.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum MarketDescription {
-    Plain(String),
-    Localized(Vec<MarketPluginDescription>),
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct MarketPlugin {
-    pub id: String,
-    pub name: String,
-    #[serde(default)]
-    pub description: Option<MarketDescription>,
-    #[serde(default)]
-    pub support_versions: Option<serde_json::Value>,
-    #[serde(default)]
-    pub urls: Option<MarketPluginUrls>,
-    #[serde(default)]
-    pub relationship: Option<Vec<MarketPluginRelationship>>,
-    /// Which catalog this entry came from. Defaults to the primary dsh-plug.in
-    /// catalog so old cached/frontend payloads without the field stay valid.
-    #[serde(default)]
-    pub source: PluginSource,
-    /// Community-catalog extras (absent for the primary catalog).
-    #[serde(default)]
-    pub category: Option<String>,
-    #[serde(default)]
-    pub stars: Option<u64>,
-    #[serde(default)]
-    pub downloads: Option<u64>,
-}
-
-/// Which catalog a market entry came from. Serialised lowercase so the
-/// frontend filter can match on the string.
-#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "kebab-case")]
-pub enum PluginSource {
-    /// The primary catalog at dsh-plug.in (official, listed first).
-    #[default]
-    DshPlugins,
-    /// The community catalog at awesome-dsh-plugin.com.
-    AwesomeDshPlugin,
-}
-
-// ---------------------------------------------------------------------------
-// Community catalog (awesome-dsh-plugin.com)
-// ---------------------------------------------------------------------------
-
-/// One entry in the awesome-dsh-plugin catalog. Only the fields the launcher
-/// consumes are modelled; the rest (page/url/added/…) are ignored.
-#[derive(Clone, Debug, Deserialize)]
-struct AwesomePlugin {
-    name: String,
-    #[serde(default)]
-    url: Option<String>,
-    /// Bilingual description { en, zh }.
-    #[serde(default)]
-    description: Option<AwesomeDescription>,
-    #[serde(default)]
-    category: Option<String>,
-    #[serde(default)]
-    stars: Option<u64>,
-    #[serde(default)]
-    downloads: Option<u64>,
-    /// The install command line, e.g.
-    /// `dsh plugin --profile web add @scope/pkg` (npm) or
-    /// `dsh plugin --profile web add github:owner/repo` (GitHub).
-    install: String,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-struct AwesomeDescription {
-    #[serde(default)]
-    en: Option<String>,
-    #[serde(default)]
-    zh: Option<String>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-struct AwesomeCatalog {
-    #[serde(default)]
-    plugins: Vec<AwesomePlugin>,
-}
-
-/// Parses the `install` command line of an awesome-dsh-plugin entry into the
-/// launcher's plugin id: an npm package spec (`@scope/pkg`), a GitHub spec
-/// (`github:owner/repo`, optionally with `#path:<subdir>` for a plugin living
-/// in a monorepo subdirectory), or a tarball URL (`tgz:https://…x.tgz`).
-/// Returns None for anything we cannot drive.
-///
-/// The recognised shape is `dsh plugin --profile <name> add <target>` with
-/// arbitrary flags tolerated; `<target>` is taken verbatim (surrounding
-/// quotes stripped), so a trailing `@version` on an npm target is kept (the
-/// version resolver splits it later).
-fn parse_awesome_install(install: &str) -> Option<String> {
-    let tokens: Vec<&str> = install.split_whitespace().collect();
-    // Find the `add` subcommand; the install target is the next token.
-    let pos = tokens.iter().position(|t| *t == "add")?;
-    let target = tokens
-        .get(pos + 1)?
-        .trim()
-        .trim_matches('"')
-        .trim_matches('\'');
-    if target.is_empty() {
-        return None;
-    }
-    if let Some(rest) = target.strip_prefix("github:") {
-        let (repo, subpath) = parse_github_body(rest)?;
-        return Some(match subpath {
-            Some(p) => format!("github:{repo}#path:{p}"),
-            None => format!("github:{repo}"),
-        });
-    }
-    // URL tarball (e.g. a GitHub release asset): pnpm installs it verbatim,
-    // but it has no registry/channel metadata — the id is `tgz:<url>`.
-    if (target.starts_with("https://") || target.starts_with("http://"))
-        && (target.ends_with(".tgz") || target.ends_with(".tar.gz"))
-    {
-        return Some(format!("tgz:{target}"));
-    }
-    // npm target: a bare or scoped package name, optionally @version.
-    // Reject anything with a scheme/host (not a plain registry spec).
-    if target.contains("://") || target.contains(' ') {
-        return None;
-    }
-    Some(target.to_string())
-}
-
-/// Splits the body of a `github:` spec (`owner/repo`, optionally followed by
-/// `#path:<subdir>`) into its repo and subdirectory parts. Returns None when
-/// the repo part is not exactly `owner/repo`, or when the fragment is
-/// anything other than a `path:` — a committish is install-time state, not
-/// part of the plugin's identity.
-fn parse_github_body(body: &str) -> Option<(String, Option<String>)> {
-    let (repo, frag) = match body.split_once('#') {
-        Some((r, f)) => (r, Some(f)),
-        None => (body, None),
-    };
-    let repo = repo.trim_end_matches(".git").trim_end_matches('/');
-    // Must be owner/repo with both parts present.
-    let mut parts = repo.split('/');
-    match (parts.next(), parts.next(), parts.next()) {
-        (Some(o), Some(r), None) if !o.is_empty() && !r.is_empty() => {}
-        _ => return None,
-    }
-    let subpath = match frag {
-        None => None,
-        Some(f) => {
-            let p = f.strip_prefix("path:")?.trim_matches('/');
-            if p.is_empty() {
-                return None;
-            }
-            Some(p.to_string())
-        }
-    };
-    Some((repo.to_string(), subpath))
-}
-
-/// Parses a launcher plugin id of the form `github:owner/repo` or
-/// `github:owner/repo#path:<subdir>` into (repo, subdir).
-pub(crate) fn parse_github_id(id: &str) -> Option<(String, Option<String>)> {
-    parse_github_body(id.strip_prefix("github:")?)
-}
-
-/// Builds the pnpm install spec for a git-hosted plugin: the repo at `git_ref`
-/// (a commit sha for alpha, a release tag for stable/beta), plus
-/// `&path:<subdir>` for monorepo plugins (pnpm splits the fragment on '&').
-pub(crate) fn github_install_spec(repo: &str, git_ref: &str, subpath: Option<&str>) -> String {
-    match subpath {
-        Some(p) => format!("github:{repo}#{git_ref}&path:{p}"),
-        None => format!("github:{repo}#{git_ref}"),
-    }
-}
-
-/// Converts one awesome-dsh-plugin entry into a `MarketPlugin`, or None when
-/// its `install` line cannot be resolved to a drivable plugin id.
-fn awesome_to_market(p: &AwesomePlugin) -> Option<MarketPlugin> {
-    let id = parse_awesome_install(&p.install)?;
-    let description = p.description.as_ref().and_then(|d| {
-        let mut list = Vec::new();
-        if let Some(en) = &d.en {
-            list.push(MarketPluginDescription {
-                language: "en".to_string(),
-                content: en.clone(),
-            });
-        }
-        if let Some(zh) = &d.zh {
-            list.push(MarketPluginDescription {
-                language: "zh".to_string(),
-                content: zh.clone(),
-            });
-        }
-        if list.is_empty() {
-            None
-        } else {
-            Some(MarketDescription::Localized(list))
-        }
-    });
-    let urls = p.url.as_ref().map(|u| MarketPluginUrls {
-        homepage: None,
-        repository: Some(u.clone()),
-        issues: None,
-    });
-    Some(MarketPlugin {
-        id,
-        name: p.name.clone(),
-        description,
-        support_versions: None,
-        urls,
-        relationship: None,
-        source: PluginSource::AwesomeDshPlugin,
-        category: p.category.clone(),
-        stars: p.stars,
-        downloads: p.downloads,
-    })
-}
-
-// ---------------------------------------------------------------------------
-// Version channels
-// ---------------------------------------------------------------------------
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum PluginChannel {
-    /// Releases / npm latest.
-    Stable,
-    /// Pre-releases / npm next.
-    Beta,
-    /// Latest commit on the default branch.
-    Alpha,
-}
-
-#[derive(Clone, Debug, Serialize)]
-pub struct PluginVersionInfo {
-    /// The raw version identifier passed to the installer: a semver version
-    /// for stable/beta, a commit hash for alpha.
-    pub version: String,
-    pub channel: PluginChannel,
-    /// Short human label (e.g. the commit date or release tag).
-    pub label: Option<String>,
-    /// ISO publish/commit time; used by the UI to sort the mixed list.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub published_at: Option<String>,
-    /// Whether this is the channel's default (latest) entry.
-    pub is_default: bool,
-}
-
-/// A page of versions. `has_more` is true when pagination can continue
-/// (used by the alpha / commit channel).
-#[derive(Clone, Debug, Serialize)]
-pub struct PluginVersionPage {
-    pub versions: Vec<PluginVersionInfo>,
-    pub has_more: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -330,18 +37,8 @@ pub struct InstalledPlugin {
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct InstallPluginInput {
-    pub plugin_id: String,
-    pub version: String,
-    pub channel: PluginChannel,
-    pub instance_id: String,
-    pub profile: String,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct SetPluginsEnabledInput {
-    pub instance_id: String,
+    pub home_id: String,
     pub profile: String,
     pub plugin_ids: Vec<String>,
     pub enabled: bool,
@@ -387,400 +84,12 @@ pub(crate) async fn fetch_json_pub(url: &str, cap: usize) -> Result<serde_json::
 }
 
 // ---------------------------------------------------------------------------
-// Commands: catalog
-// ---------------------------------------------------------------------------
-
-/// Fetches the marketplace plugin catalog from every configured source and
-/// merges them. The primary dsh-plug.in catalog is listed first; entries from
-/// the community catalog (awesome-dsh-plugin.com) follow. A source that fails
-/// to fetch or parse is skipped (logged), never aborts the whole listing, and
-/// a duplicate plugin id keeps the higher-priority (earlier) source's entry.
-/// `query` filters by id/name/description (case-insensitive substring).
-#[tauri::command(rename_all = "snake_case")]
-pub async fn fetch_plugin_market(query: Option<String>) -> Result<Vec<MarketPlugin>, String> {
-    // Fetch both catalogs concurrently; each returns Err on failure.
-    let (primary_res, awesome_res) = tokio::join!(
-        fetch_json(MARKET_URL, 4 * 1024 * 1024),
-        fetch_json(AWESOME_URL, 8 * 1024 * 1024)
-    );
-
-    let mut plugins: Vec<MarketPlugin> = Vec::new();
-
-    // Primary catalog (dsh-plug.in) first.
-    match primary_res.and_then(|v| {
-        serde_json::from_value::<Vec<MarketPlugin>>(v)
-            .map_err(|e| format!("解析插件市场数据失败: {e}"))
-    }) {
-        Ok(mut list) => {
-            for p in &mut list {
-                p.source = PluginSource::DshPlugins;
-            }
-            plugins.extend(list);
-        }
-        Err(e) => crate::log_warn!("主插件源获取失败，忽略: {e}"),
-    }
-
-    // Community catalog (awesome-dsh-plugin.com) after; skip duplicate ids.
-    match awesome_res.and_then(|v| {
-        serde_json::from_value::<AwesomeCatalog>(v)
-            .map_err(|e| format!("解析 awesome-dsh-plugin 数据失败: {e}"))
-    }) {
-        Ok(cat) => {
-            for aw in &cat.plugins {
-                let Some(mp) = awesome_to_market(aw) else {
-                    crate::log_warn!(
-                        "awesome 插件「{}」install 行无法解析，跳过: {}",
-                        aw.name,
-                        aw.install
-                    );
-                    continue;
-                };
-                if plugins.iter().any(|p| p.id == mp.id) {
-                    crate::log_warn!("awesome 插件「{}」与主源 id 冲突，保留主源条目", mp.id);
-                    continue;
-                }
-                plugins.push(mp);
-            }
-        }
-        Err(e) => crate::log_warn!("awesome-dsh-plugin 插件源获取失败，忽略: {e}"),
-    }
-
-    let q = query
-        .as_deref()
-        .map(|s| s.trim().to_lowercase())
-        .filter(|s| !s.is_empty());
-    let Some(q) = q else {
-        return Ok(plugins);
-    };
-
-    let filtered = plugins
-        .into_iter()
-        .filter(|p| {
-            if p.id.to_lowercase().contains(&q) || p.name.to_lowercase().contains(&q) {
-                return true;
-            }
-            match &p.description {
-                Some(MarketDescription::Plain(s)) => s.to_lowercase().contains(&q),
-                Some(MarketDescription::Localized(list)) => {
-                    list.iter().any(|d| d.content.to_lowercase().contains(&q))
-                }
-                None => false,
-            }
-        })
-        .collect();
-    Ok(filtered)
-}
-
-// ---------------------------------------------------------------------------
-// Commands: versions per channel
-// ---------------------------------------------------------------------------
-
-/// Resolve the GitHub "owner/repo" for a plugin id. npm ids look up the
-/// package's repository URL when urls.repository is absent; github: ids are
-/// parsed directly.
-fn github_repo_of(plugin: &MarketPlugin) -> Option<String> {
-    if let Some(repo) = plugin
-        .urls
-        .as_ref()
-        .and_then(|u| u.repository.as_ref().or(u.homepage.as_ref()))
-    {
-        if let Some(pos) = repo.find("github.com/") {
-            let tail = &repo[pos + "github.com/".len()..];
-            let tail = tail.trim_end_matches(".git").trim_end_matches('/');
-            let mut parts = tail.split('/');
-            if let (Some(owner), Some(name)) = (parts.next(), parts.next()) {
-                if !owner.is_empty() && !name.is_empty() {
-                    return Some(format!("{owner}/{name}"));
-                }
-            }
-        }
-    }
-    if let Some((repo, _subpath)) = parse_github_id(&plugin.id) {
-        return Some(repo);
-    }
-    None
-}
-
-/// Fetches versions for a plugin across the requested channel.
-/// - stable/beta read the npm registry dist-tags (latest / next) and fall
-///   back to the version list ordered by publish time (all at once).
-/// - alpha pages through the GitHub commit history (30 per page); `page` is
-///   1-based and defaults to 1. `has_more` tells the UI to lazy-load more.
-#[tauri::command(rename_all = "snake_case")]
-pub async fn fetch_plugin_versions(
-    plugin_id: String,
-    channel: PluginChannel,
-    page: Option<u32>,
-) -> Result<PluginVersionPage, String> {
-    // URL tarballs have no registry/channels: a single pseudo-version on
-    // stable; other channels are empty.
-    if plugin_id.starts_with("tgz:") {
-        let versions = match channel {
-            PluginChannel::Stable => vec![PluginVersionInfo {
-                version: "latest".to_string(),
-                channel: channel.clone(),
-                label: Some(plugin_id.clone()),
-                published_at: None,
-                is_default: true,
-            }],
-            _ => Vec::new(),
-        };
-        return Ok(PluginVersionPage {
-            versions,
-            has_more: false,
-        });
-    }
-    match channel {
-        PluginChannel::Stable | PluginChannel::Beta => {
-            // Git-hosted plugins have no npm registry entry; their release
-            // channels come from the repo's GitHub releases instead (stable
-            // = full releases, beta = prereleases).
-            if plugin_id.starts_with("github:") {
-                return github_release_versions(&plugin_id, &channel).await;
-            }
-            let versions = npm_versions(&plugin_id, &channel).await?;
-            Ok(PluginVersionPage {
-                versions,
-                has_more: false,
-            })
-        }
-        PluginChannel::Alpha => alpha_commit(&plugin_id, page.unwrap_or(1)).await,
-    }
-}
-
-/// Fetches GitHub releases as versions for a `github:` plugin, newest first:
-/// stable keeps full releases, beta keeps prereleases. The release's tag name
-/// becomes the install ref; the channel's newest entry is the default.
-async fn github_release_versions(
-    plugin_id: &str,
-    channel: &PluginChannel,
-) -> Result<PluginVersionPage, String> {
-    let (repo, _subpath) = parse_github_id(plugin_id)
-        .ok_or_else(|| format!("无法解析 GitHub 插件 id: {plugin_id}"))?;
-    let url = github_api_url(&format!("/repos/{repo}/releases?per_page=30"));
-    let doc = fetch_json(&url, 4 * 1024 * 1024).await?;
-    let want_prerelease = matches!(channel, PluginChannel::Beta);
-    let mut out: Vec<PluginVersionInfo> = Vec::new();
-    if let Some(arr) = doc.as_array() {
-        for rel in arr {
-            if rel.get("draft").and_then(|v| v.as_bool()).unwrap_or(false) {
-                continue;
-            }
-            let prerelease = rel
-                .get("prerelease")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
-            if prerelease != want_prerelease {
-                continue;
-            }
-            let tag = rel
-                .get("tag_name")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            if tag.is_empty() {
-                continue;
-            }
-            let name = rel
-                .get("name")
-                .and_then(|v| v.as_str())
-                .filter(|s| !s.is_empty());
-            let date = rel.get("published_at").and_then(|v| v.as_str());
-            let label = match (name, date) {
-                (Some(n), Some(d)) => Some(format!("{d} · {n}")),
-                (Some(n), None) => Some(n.to_string()),
-                (None, Some(d)) => Some(d.to_string()),
-                _ => None,
-            };
-            out.push(PluginVersionInfo {
-                version: tag,
-                channel: channel.clone(),
-                label,
-                published_at: date.map(|d| d.to_string()),
-                is_default: false,
-            });
-        }
-    }
-    if let Some(first) = out.first_mut() {
-        first.is_default = true;
-    }
-    Ok(PluginVersionPage {
-        versions: out,
-        has_more: false,
-    })
-}
-
-async fn npm_versions(
-    plugin_id: &str,
-    channel: &PluginChannel,
-) -> Result<Vec<PluginVersionInfo>, String> {
-    // Scoped npm packages must be URL-encoded (@dsh-plugin/x -> @dsh-plugin%2fx).
-    let encoded = plugin_id.replace('/', "%2f");
-    let url = format!("{NPM_REGISTRY}/{encoded}");
-    let doc = fetch_json(&url, 16 * 1024 * 1024).await?;
-
-    let dist_tags = doc
-        .get("dist-tags")
-        .cloned()
-        .unwrap_or(serde_json::json!({}));
-    let tag_name = match channel {
-        PluginChannel::Stable => "latest",
-        PluginChannel::Beta => "next",
-        PluginChannel::Alpha => unreachable!(),
-    };
-
-    // The channel's default (dist-tag) version, if present.
-    let default_version = dist_tags
-        .get(tag_name)
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-
-    // Collect all published versions with their release time, newest first.
-    let time = doc.get("time").cloned().unwrap_or(serde_json::json!({}));
-    let mut versions: Vec<(String, String)> = Vec::new();
-    if let Some(obj) = time.as_object() {
-        for (ver, ts) in obj {
-            if ver == "created" || ver == "modified" {
-                continue;
-            }
-            let ts = ts.as_str().unwrap_or("").to_string();
-            versions.push((ver.clone(), ts));
-        }
-    }
-    versions.sort_by(|a, b| b.1.cmp(&a.1)); // newest first by ISO time
-
-    // Publish time of the dist-tag default, for the synthetic fallback entry.
-    let default_ts = default_version.as_deref().and_then(|def| {
-        versions
-            .iter()
-            .find(|(v, _)| v == def)
-            .map(|(_, ts)| ts.clone())
-            .filter(|ts| !ts.is_empty())
-    });
-
-    // Filter per channel: stable = no pre-release tag, beta = pre-release tag.
-    let is_prerelease = |v: &str| v.contains('-');
-    let mut out: Vec<PluginVersionInfo> = Vec::new();
-    for (ver, ts) in versions {
-        let include = match channel {
-            PluginChannel::Stable => !is_prerelease(&ver),
-            PluginChannel::Beta => is_prerelease(&ver),
-            PluginChannel::Alpha => unreachable!(),
-        };
-        if !include {
-            continue;
-        }
-        let is_default = default_version.as_deref() == Some(ver.as_str());
-        out.push(PluginVersionInfo {
-            version: ver,
-            channel: channel.clone(),
-            label: if ts.is_empty() {
-                None
-            } else {
-                Some(ts.clone())
-            },
-            published_at: if ts.is_empty() { None } else { Some(ts) },
-            is_default,
-        });
-    }
-
-    // Make sure the dist-tag default is present even if it didn't pass the
-    // filter (e.g. a `latest` that is itself a pre-release).
-    if let Some(def) = default_version {
-        if !out.iter().any(|v| v.version == def) {
-            out.insert(
-                0,
-                PluginVersionInfo {
-                    version: def,
-                    channel: channel.clone(),
-                    label: Some("dist-tag".to_string()),
-                    published_at: default_ts.clone(),
-                    is_default: true,
-                },
-            );
-        }
-    }
-    Ok(out)
-}
-
-/// Fetches one page of the commit history (alpha channel). GitHub commits
-/// API returns up to `per_page` items; `has_more` is true when a full page
-/// came back. `is_default` marks the first commit of page 1.
-async fn alpha_commit(plugin_id: &str, page: u32) -> Result<PluginVersionPage, String> {
-    // Alpha needs the GitHub repo; it is derived from the market entry.
-    let catalog = fetch_plugin_market(None).await?;
-    let plugin = catalog
-        .iter()
-        .find(|p| p.id == plugin_id)
-        .ok_or_else(|| format!("插件 {plugin_id} 不在市场中"))?;
-    let repo = github_repo_of(plugin)
-        .ok_or_else(|| format!("插件 {plugin_id} 没有可用的 GitHub 仓库地址"))?;
-
-    // Monorepo plugins (`github:owner/repo#path:<subdir>`): restrict the
-    // commit list to commits touching the plugin's own directory.
-    let path_filter = parse_github_id(plugin_id)
-        .and_then(|(_, subpath)| subpath)
-        .map(|p| format!("&path={p}"))
-        .unwrap_or_default();
-
-    const PER_PAGE: u32 = 30;
-    let url = github_api_url(&format!(
-        "/repos/{repo}/commits?per_page={PER_PAGE}&page={page}{path_filter}"
-    ));
-    let doc = fetch_json(&url, 4 * 1024 * 1024).await?;
-    let mut out: Vec<PluginVersionInfo> = Vec::new();
-    if let Some(arr) = doc.as_array() {
-        for (i, commit) in arr.iter().enumerate() {
-            let sha = commit
-                .get("sha")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            if sha.is_empty() {
-                continue;
-            }
-            let message = commit
-                .pointer("/commit/message")
-                .and_then(|v| v.as_str())
-                .map(|s| s.lines().next().unwrap_or("").to_string());
-            let date = commit
-                .pointer("/commit/committer/date")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
-            let label = match (&message, &date) {
-                (Some(m), Some(d)) => Some(format!("{d} · {m}")),
-                (Some(m), None) => Some(m.clone()),
-                (None, Some(d)) => Some(d.clone()),
-                _ => None,
-            };
-            out.push(PluginVersionInfo {
-                version: sha,
-                channel: PluginChannel::Alpha,
-                label,
-                published_at: date,
-                is_default: page == 1 && i == 0,
-            });
-        }
-    }
-    let has_more = out.len() as u32 == PER_PAGE;
-    Ok(PluginVersionPage {
-        versions: out,
-        has_more,
-    })
-}
-
-// ---------------------------------------------------------------------------
 // Profile manifest helpers (read/write package.json + cordis.patch.yml)
 // ---------------------------------------------------------------------------
 
 /// Path of a profile dir under a DSH_HOME.
 fn profile_dir(home_path: &std::path::Path, profile: &str) -> std::path::PathBuf {
     home_path.join("profiles").join(profile)
-}
-
-/// `pub(crate)` for the modpack module (issue #5).
-pub(crate) fn profile_dir_pub(home_path: &std::path::Path, profile: &str) -> std::path::PathBuf {
-    profile_dir(home_path, profile)
 }
 
 /// Read the profile package.json (dsh.profile.bundles + dependencies).
@@ -809,16 +118,16 @@ pub fn cordis_id_of(package: &str) -> String {
 // Commands: installed plugin listing (per instance + profile)
 // ---------------------------------------------------------------------------
 
-/// Lists plugins installed into an instance's profile, excluding core
+/// Lists plugins installed into a HOME's profile, excluding core
 /// @deepseek-ai/* packages. Reads the profile manifest (dependencies +
 /// bundles) and cordis.patch.yml (disabled rows).
 #[tauri::command(rename_all = "snake_case")]
 pub async fn list_installed_plugins(
     state: State<'_, AppState>,
-    instance_id: String,
+    home_id: String,
     profile: String,
 ) -> Result<Vec<InstalledPlugin>, String> {
-    let (home_path, _version) = resolve_instance(&state, &instance_id)?;
+    let (home_path, _) = resolve_home_paths(&state, &home_id)?;
     let dir = profile_dir(&home_path, &profile);
     let manifest = read_profile_manifest(&dir)?;
 
@@ -895,27 +204,20 @@ fn read_disabled_ids(dir: &std::path::Path) -> std::collections::HashSet<String>
     set
 }
 
-/// Resolve an instance to (home_path, version_dir).
-pub(crate) fn resolve_instance(
+/// Resolve a HOME to (home_path, version_dir): plugin file edits need the
+/// HOME path; `dsh plugin remove` runs through a CLI binary, so any
+/// installed version serves (the newest installed one wins).
+pub(crate) fn resolve_home_paths(
     state: &State<'_, AppState>,
-    instance_id: &str,
+    home_id: &str,
 ) -> Result<(std::path::PathBuf, std::path::PathBuf), String> {
     let cfg = state.config.lock().unwrap();
-    let inst: &DshInstance = cfg
-        .instances
-        .iter()
-        .find(|i| i.id == instance_id)
-        .ok_or_else(|| "实例不存在".to_string())?;
     let home = cfg
         .homes
         .iter()
-        .find(|h| h.id == inst.home_id)
+        .find(|h| h.id == home_id)
         .ok_or_else(|| "DSH_HOME 不存在".to_string())?;
-    let version = cfg
-        .versions
-        .iter()
-        .find(|v| v.id == inst.version_id)
-        .ok_or_else(|| "版本不存在".to_string())?;
+    let version = cfg.versions.last().ok_or_else(|| "尚未安装任何 DSH 版本".to_string())?;
     Ok((home.path.clone(), version.dir.clone()))
 }
 
@@ -930,7 +232,7 @@ pub async fn set_plugins_enabled(
     state: State<'_, AppState>,
     input: SetPluginsEnabledInput,
 ) -> Result<(), String> {
-    let (home_path, _) = resolve_instance(&state, &input.instance_id)?;
+    let (home_path, _) = resolve_home_paths(&state, &input.home_id)?;
     let dir = profile_dir(&home_path, &input.profile);
     let patch_path = dir.join("cordis.patch.yml");
 
@@ -955,40 +257,33 @@ pub async fn set_plugins_enabled(
 #[derive(Clone, Debug, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UninstallPluginInput {
-    pub instance_id: String,
+    pub home_id: String,
     pub profile: String,
     pub plugin_id: String,
 }
 
-/// Uninstalls a plugin from an instance's profile through
+/// Uninstalls a plugin from a HOME's profile through
 /// `dsh plugin --profile <name> remove <id>` (the CLI removes the dependency
 /// and reconciles dsh.profile.bundles), then drops the plugin's
 /// cordis.patch.yml rows (insert / disabled), which the CLI does not manage.
 #[tauri::command(rename_all = "snake_case")]
 pub async fn uninstall_plugin(
-    app: AppHandle,
     state: State<'_, AppState>,
     input: UninstallPluginInput,
 ) -> Result<(), String> {
-    let (home_path, version_dir) = resolve_instance(&state, &input.instance_id)?;
+    let (home_path, version_dir) = resolve_home_paths(&state, &input.home_id)?;
     let dir = profile_dir(&home_path, &input.profile);
     if !dir.exists() {
         return Err(format!("Profile「{}」不存在", input.profile));
     }
 
-    // 0. Same profile serialization as installs: a removal also rewrites the
-    //    manifest, so it must not race an install into the same profile.
-    let lock = profile_lock(&state, &dir).await;
-    let _guard = lock.lock().await;
-
-    // 1. `dsh plugin remove <id>` through the instance's own CLI: it removes
-    //    the dependency and reconciles dsh.profile.bundles (a name that is no
-    //    longer an installed bundle leaves the layer stack), so the manifest is
-    //    never edited by hand here.
-    run_dsh_plugin(
-        &app,
+    // `dsh plugin remove <id>` through an installed CLI: it removes the
+    // dependency and reconciles dsh.profile.bundles (a name that is no
+    // longer an installed bundle leaves the layer stack), so the manifest is
+    // never edited by hand here. Runs synchronously; the frontend shows its
+    // own progress state.
+    run_dsh_plugin_sync(
         &state,
-        "uninstall",
         &PluginCliTarget {
             version_dir: &version_dir,
             home_path: &home_path,
@@ -999,8 +294,7 @@ pub async fn uninstall_plugin(
             spec: &input.plugin_id,
             loglevel: "warn",
         },
-    )
-    .await?;
+    )?;
 
     // 2. Drop the plugin's rows from cordis.patch.yml (insert rows mount the
     //    plugin; disabled rows gate it). Reuse the block-stripping logic in
@@ -1149,431 +443,6 @@ fn set_disabled_row(raw: &str, cordis_id: &str, enabled: bool) -> String {
     result
 }
 
-// ---------------------------------------------------------------------------
-// Commands: install task
-// ---------------------------------------------------------------------------
-
-/// Enqueues an install task: pnpm add <pkg>@<version> into the profile dir,
-/// register the bundle in package.json (dsh.profile.bundles) and cordis.patch
-/// insert row for non-bundle plugins. Reuses the shared pnpm store and the
-/// onlyBuiltDependencies build-script opt-in.
-#[tauri::command(rename_all = "snake_case")]
-pub async fn start_install_plugin_task(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    input: InstallPluginInput,
-) -> Result<String, String> {
-    // Validate instance + profile early.
-    let (home_path, _version) = resolve_instance(&state, &input.instance_id)?;
-    let dir = profile_dir(&home_path, &input.profile);
-    if !dir.exists() {
-        return Err(format!("Profile「{}」不存在", input.profile));
-    }
-
-    let (label, display_name) = match input.plugin_id.strip_prefix("tgz:") {
-        Some(target) => {
-            let base = target.rsplit(['/', '\\']).next().unwrap_or(target);
-            (
-                format!(
-                    "安装插件包 {base} 到「{}」的 profile「{}」",
-                    input.instance_id, input.profile
-                ),
-                base.to_string(),
-            )
-        }
-        None => (
-            format!(
-                "安装插件 {}@{} 到「{}」的 profile「{}」",
-                input.plugin_id, input.version, input.instance_id, input.profile
-            ),
-            input.plugin_id.clone(),
-        ),
-    };
-    let task = crate::tasks::TaskInfo {
-        id: new_id("t"),
-        kind: "install-plugin".to_string(),
-        label,
-        version: input.version.clone(),
-        state: crate::tasks::TaskState::Running,
-        percent: 0,
-        created_at: crate::tasks::now_millis_pub(),
-        message: None,
-        instance_id: Some(input.instance_id.clone()),
-        instance_name: Some(display_name),
-        reserved_home_path: None,
-        logs: Vec::new(),
-        child: None,
-    };
-    let task_id = task.id.clone();
-    state.tasks.lock().await.insert(task_id.clone(), task);
-    crate::tasks::emit_progress_pub(
-        &app,
-        &task_id,
-        crate::tasks::TaskState::Running,
-        0,
-        None,
-        None,
-    );
-
-    let worker_app = app.clone();
-    let worker_task_id = task_id.clone();
-    let input = input.clone();
-    tauri::async_runtime::spawn(async move {
-        let state = worker_app.state::<AppState>();
-        run_install_plugin_task(&worker_app, &state, &worker_task_id, input).await;
-    });
-
-    Ok(task_id)
-}
-
-/// Installs a plugin from a local `.tgz` tarball (file picker or drag-drop).
-/// The tarball is handed to the instance's CLI verbatim (`pnpm add` accepts
-/// local tarballs); the recorded dependency name is resolved back from the
-/// profile manifest afterwards, same as registry/git installs.
-#[tauri::command(rename_all = "snake_case")]
-pub async fn start_install_plugin_file_task(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    instance_id: String,
-    profile: String,
-    path: String,
-) -> Result<String, String> {
-    let lower = path.to_lowercase();
-    if !(lower.ends_with(".tgz") || lower.ends_with(".tar.gz")) {
-        return Err("仅支持 .tgz / .tar.gz 插件包".to_string());
-    }
-    if !std::path::Path::new(&path).is_file() {
-        return Err(format!("插件包不存在: {path}"));
-    }
-    // pnpm treats Windows paths more reliably with forward slashes.
-    let spec_path = path.replace('\\', "/");
-    let input = InstallPluginInput {
-        plugin_id: format!("tgz:{spec_path}"),
-        version: "local".to_string(),
-        channel: PluginChannel::Stable,
-        instance_id,
-        profile,
-    };
-    start_install_plugin_task(app, state, input).await
-}
-
-async fn run_install_plugin_task(
-    app: &AppHandle,
-    state: &State<'_, AppState>,
-    task_id: &str,
-    input: InstallPluginInput,
-) {
-    let result = do_install_plugin(app, state, task_id, &input).await;
-    let mut tasks = state.tasks.lock().await;
-    if let Some(task) = tasks.get_mut(task_id) {
-        if task.state == crate::tasks::TaskState::Cancelled {
-            return;
-        }
-        match result {
-            Ok(()) => {
-                task.state = crate::tasks::TaskState::Done;
-                task.percent = 100;
-                crate::tasks::emit_progress_pub(
-                    app,
-                    task_id,
-                    crate::tasks::TaskState::Done,
-                    100,
-                    None,
-                    Some(input.instance_id.clone()),
-                );
-            }
-            Err(msg) => {
-                task.state = crate::tasks::TaskState::Error;
-                task.message = Some(msg.clone());
-                crate::tasks::push_log_locked_pub(task, &format!("error: {msg}"));
-                let pct = task.percent;
-                drop(tasks);
-                crate::tasks::emit_progress_pub(
-                    app,
-                    task_id,
-                    crate::tasks::TaskState::Error,
-                    pct,
-                    Some(msg),
-                    None,
-                );
-            }
-        }
-    }
-}
-
-async fn do_install_plugin(
-    app: &AppHandle,
-    state: &State<'_, AppState>,
-    task_id: &str,
-    input: &InstallPluginInput,
-) -> Result<(), String> {
-    let (home_path, version_dir) = resolve_instance(state, &input.instance_id)?;
-    let dir = profile_dir(&home_path, &input.profile);
-
-    // Spec: tarball ids (`tgz:`) install the URL/path verbatim; npm packages
-    // use <pkg>@<version>; git-hosted (github:) plugins install the repo at a
-    // ref — a commit sha for alpha, a release tag for stable/beta — plus an
-    // optional `&path:<subdir>` for monorepo plugins.
-    let spec = match input.plugin_id.strip_prefix("tgz:") {
-        Some(target) => target.to_string(),
-        None => match parse_github_id(&input.plugin_id) {
-            Some((repo, subpath)) => github_install_spec(&repo, &input.version, subpath.as_deref()),
-            None => match input.channel {
-                PluginChannel::Alpha => {
-                    let catalog = fetch_plugin_market(None).await?;
-                    let plugin = catalog
-                        .iter()
-                        .find(|p| p.id == input.plugin_id)
-                        .ok_or_else(|| format!("插件 {} 不在市场中", input.plugin_id))?;
-                    let repo = github_repo_of(plugin)
-                        .ok_or_else(|| format!("插件 {} 没有 GitHub 仓库", input.plugin_id))?;
-                    format!("github:{repo}#{}", input.version)
-                }
-                _ => format!("{}@{}", input.plugin_id, input.version),
-            },
-        },
-    };
-
-    crate::tasks::push_task_log_pub(
-        app,
-        state,
-        task_id,
-        &format!("安装 {spec} 到 {}", dir.display()),
-    )
-    .await;
-
-    // 0. Serialize against this profile: `dsh plugin` is a read-modify-write
-    //    cycle over the profile's package.json (pnpm writes dependencies, then
-    //    the CLI reconciles dsh.profile.bundles from the installed state), so
-    //    parallel installs into one profile clobber each other and only the
-    //    last plugin survives. Queue instead.
-    let lock = profile_lock(state, &dir).await;
-    let guard = match lock.try_lock() {
-        Ok(g) => g,
-        Err(_) => {
-            // Queued behind another operation on this profile: reflect that in
-            // the task state so the UI shows the queue depth instead of a row
-            // of "running" tasks that are actually waiting.
-            set_task_queued(app, state, task_id).await;
-            crate::tasks::push_task_log_pub(
-                app,
-                state,
-                task_id,
-                "该 profile 正在执行其他插件操作，排队等待…",
-            )
-            .await;
-            lock.lock().await
-        }
-    };
-    let _guard = guard;
-    // Cancelled while queued: stop before touching the profile.
-    if task_cancelled(state, task_id).await {
-        return Err("已取消".to_string());
-    }
-    set_task_running(app, state, task_id).await;
-
-    // 1. `dsh plugin add <spec>` through the instance's own CLI: it installs
-    //    into the profile dir and reconciles dsh.profile.bundles itself, so the
-    //    launcher neither drives pnpm nor guesses the layer list.
-    run_dsh_plugin(
-        app,
-        state,
-        task_id,
-        &PluginCliTarget {
-            version_dir: &version_dir,
-            home_path: &home_path,
-            profile: &input.profile,
-        },
-        &PluginCliOp {
-            subcommand: "add",
-            spec: &spec,
-            loglevel: "http",
-        },
-    )
-    .await?;
-
-    // 2. Resolve the real package name the plugin was recorded under. pnpm
-    //    keys dependencies by package name: for npm installs that IS the
-    //    plugin id, but for git-hosted installs the id is a `github:` spec
-    //    and the spec lands in the dependency VALUE. Every downstream id use
-    //    (bundles check, cordis mount row) needs the real name — mounting the
-    //    raw github: spec makes cordis import it as an ESM URL and the whole
-    //    profile fails to boot with ERR_UNSUPPORTED_ESM_URL_SCHEME.
-    let installed_name = match resolve_installed_name(&dir, &input.plugin_id, &spec) {
-        Some(name) => {
-            if name != input.plugin_id {
-                crate::tasks::push_task_log_pub(
-                    app,
-                    state,
-                    task_id,
-                    &format!("插件已安装为包「{name}」"),
-                )
-                .await;
-            }
-            name
-        }
-        None => {
-            if input.plugin_id.starts_with("github:") || input.plugin_id.starts_with("tgz:") {
-                // Boot safety: never mount an unresolved github:/tgz: id.
-                let msg = format!(
-                    "无法在 package.json 中定位 {} 的已安装包名，跳过 cordis 挂载（请检查 profile）",
-                    input.plugin_id
-                );
-                crate::log_warn!("{msg}");
-                crate::tasks::push_task_log_pub(app, state, task_id, &msg).await;
-                return Ok(());
-            }
-            input.plugin_id.clone()
-        }
-    };
-
-    // 3. Bundle registration is the CLI's job (reconciled from the installed
-    //    state). Read back its verdict: a package listed in
-    //    dsh.profile.bundles is mounted as a profile layer, and adding a
-    //    cordis.patch.yml insert row on top would mount it twice — the loader
-    //    then fails with `duplicate loader entry id`. Only a plain package
-    //    (no `dsh.bundle.patch`, so not reconciled into bundles) needs the
-    //    explicit insert row.
-    if manifest_lists_bundle(&dir, &installed_name)? {
-        crate::tasks::push_task_log_pub(
-            app,
-            state,
-            task_id,
-            "CLI 已将插件登记为 profile 层（dsh.profile.bundles），跳过 cordis insert 行",
-        )
-        .await;
-    } else {
-        ensure_cordis_insert(&dir, &installed_name)?;
-        crate::tasks::push_task_log_pub(
-            app,
-            state,
-            task_id,
-            "插件未声明 dsh.bundle.patch，已写入 cordis.patch.yml insert 行以挂载",
-        )
-        .await;
-    }
-
-    Ok(())
-}
-
-/// Whether the profile manifest lists the package in `dsh.profile.bundles`
-/// after the CLI reconciled it.
-fn manifest_lists_bundle(profile_dir: &std::path::Path, plugin_id: &str) -> Result<bool, String> {
-    let manifest = read_profile_manifest(profile_dir)?;
-    Ok(manifest
-        .pointer("/dsh/profile/bundles")
-        .and_then(|b| b.as_array())
-        .map(|arr| arr.iter().any(|b| b.as_str() == Some(plugin_id)))
-        .unwrap_or(false))
-}
-
-/// Resolves the dependency key under which an install landed in the profile
-/// manifest: the real package name of the installed plugin. npm installs key
-/// by package name already; git-hosted installs record the `github:` spec as
-/// the dependency VALUE under the real name. Returns None when nothing in
-/// `dependencies` matches.
-fn resolve_installed_name(dir: &std::path::Path, plugin_id: &str, spec: &str) -> Option<String> {
-    let manifest = read_profile_manifest(dir).ok()?;
-    let deps = manifest.get("dependencies")?.as_object()?;
-    // pnpm records a git-hosted spec verbatim as the dependency value.
-    for (name, value) in deps {
-        if value.as_str() == Some(spec) {
-            return Some(name.clone());
-        }
-    }
-    // Tarball installs may be recorded with a normalized value (file:…,
-    // resolved mirrors); fall back to matching the tarball's basename.
-    if let Some(target) = plugin_id.strip_prefix("tgz:") {
-        let base = target.rsplit(['/', '\\']).next().unwrap_or(target);
-        for (name, value) in deps {
-            if value.as_str().map(|v| v.ends_with(base)).unwrap_or(false) {
-                return Some(name.clone());
-            }
-        }
-        return None;
-    }
-    // npm install: the key is the package name (the spec may carry @version).
-    let base = match plugin_id.rfind('@') {
-        Some(i) if i > 0 => &plugin_id[..i],
-        _ => plugin_id,
-    };
-    if deps.contains_key(base) {
-        return Some(base.to_string());
-    }
-    // The CLI/pnpm may normalise the recorded value; accept any value that
-    // starts with the github: repo part of the spec.
-    if let Some((repo, _)) = spec.split('#').next().and_then(parse_github_id) {
-        let prefix = format!("github:{repo}");
-        for (name, value) in deps {
-            if value.as_str().is_some_and(|v| v.starts_with(&prefix)) {
-                return Some(name.clone());
-            }
-        }
-    }
-    None
-}
-
-/// Lock key for a profile directory. On macOS, APFS is typically case-preserving/insensitive,
-/// but keeping standard canonical path string is used for profile lock contention.
-fn profile_lock_key(profile_dir: &std::path::Path) -> String {
-    profile_dir.to_string_lossy().to_string()
-}
-
-/// The mutex guarding one profile directory, created on first use.
-async fn profile_lock(
-    state: &State<'_, AppState>,
-    profile_dir: &std::path::Path,
-) -> std::sync::Arc<tokio::sync::Mutex<()>> {
-    let key = profile_lock_key(profile_dir);
-    let mut locks = state.profile_locks.lock().await;
-    locks.entry(key).or_default().clone()
-}
-
-/// Marks the task as waiting in the profile queue (no work started yet).
-async fn set_task_queued(app: &AppHandle, state: &State<'_, AppState>, task_id: &str) {
-    let mut tasks = state.tasks.lock().await;
-    if let Some(task) = tasks.get_mut(task_id) {
-        if task.state == crate::tasks::TaskState::Cancelled {
-            return;
-        }
-        task.state = crate::tasks::TaskState::Queued;
-        task.percent = 0;
-    }
-    drop(tasks);
-    crate::tasks::emit_progress_pub(app, task_id, crate::tasks::TaskState::Queued, 0, None, None);
-}
-
-/// Promotes a queued task to running once it owns the profile lock.
-async fn set_task_running(app: &AppHandle, state: &State<'_, AppState>, task_id: &str) {
-    let mut tasks = state.tasks.lock().await;
-    if let Some(task) = tasks.get_mut(task_id) {
-        if task.state == crate::tasks::TaskState::Cancelled {
-            return;
-        }
-        task.state = crate::tasks::TaskState::Running;
-    }
-    drop(tasks);
-    crate::tasks::emit_progress_pub(
-        app,
-        task_id,
-        crate::tasks::TaskState::Running,
-        0,
-        None,
-        None,
-    );
-}
-
-/// Whether the task was cancelled while it waited in the queue.
-async fn task_cancelled(state: &State<'_, AppState>, task_id: &str) -> bool {
-    state
-        .tasks
-        .lock()
-        .await
-        .get(task_id)
-        .map(|t| t.state == crate::tasks::TaskState::Cancelled)
-        .unwrap_or(false)
-}
-
 /// Which instance/profile a `dsh plugin` invocation targets.
 struct PluginCliTarget<'a> {
     version_dir: &'a std::path::Path,
@@ -1600,10 +469,12 @@ struct PluginCliOp<'a> {
 /// invocation is retried once so native deps (node-pty, koffi, esbuild,
 /// sharp…) actually build. The CLI prints the same advice for git-hosted
 /// plugins, which this automates.
-async fn run_dsh_plugin(
-    app: &AppHandle,
+/// Runs one `dsh plugin --profile <name> remove <id>` synchronously and
+/// returns its combined output on failure. The uninstall path is a plain
+/// command now (no background task): short-lived, cancellable by dropping
+/// the await on the frontend, with errors surfaced directly.
+fn run_dsh_plugin_sync(
     state: &State<'_, AppState>,
-    task_id: &str,
     target: &PluginCliTarget<'_>,
     op: &PluginCliOp<'_>,
 ) -> Result<(), String> {
@@ -1615,28 +486,17 @@ async fn run_dsh_plugin(
     // Never let a plugin's peers pull a second copy of a core package in.
     ensure_profile_npmrc(&dir)?;
 
-    let pnpm_prog = ensure_pnpm_for_plugins(app, state, task_id).await?;
+    let pnpm_prog = ensure_pnpm_for_plugins(state)?;
     let what = format!("dsh plugin {subcommand}");
 
-    // A node_modules tree linked from a *different* pnpm store (e.g. the
-    // profile was first populated by a manual `dsh plugin` run that used the
-    // user's global store) makes every pnpm op fail with
-    // ERR_PNPM_UNEXPECTED_STORE. Detect the mismatch up front — with
-    // `--loglevel=warn` (removals) pnpm prints nothing the log matcher could
-    // catch, so the log-based retry below would never fire — and relink.
+    // A node_modules tree linked from a *different* pnpm store makes pnpm
+    // fail with ERR_PNPM_UNEXPECTED_STORE; relink proactively like the
+    // installer path did.
     let store_dir = state.data_dir.join(".pnpm-store");
     if let Some(linked) = linked_store_dir(&dir) {
         if !store_paths_match(&linked, &store_dir.to_string_lossy()) {
-            crate::tasks::push_task_log_pub(
-                app,
-                state,
-                task_id,
-                &format!(
-                    "node_modules 链接自其他 pnpm store（{linked}），按 pnpm 提示重新链接后重试…"
-                ),
-            )
-            .await;
-            relink_profile_store(app, state, task_id, target, &pnpm_prog).await?;
+            crate::log_info!("node_modules 链接自其他 pnpm store（{linked}），重新链接后重试");
+            relink_profile_store_sync(state, target, &pnpm_prog)?;
         }
     }
 
@@ -1644,33 +504,60 @@ async fn run_dsh_plugin(
         let mut args: Vec<String> = vec![subcommand.to_string(), spec.to_string()];
         args.extend(forwarded_pnpm_flags(state, loglevel, subcommand));
         let cmd = dsh_plugin_command(version_dir, home_path, profile, &args, &pnpm_prog)?;
-
-        match crate::tasks::run_streamed_command(app, state, task_id, cmd, &what).await {
+        match run_command_sync(cmd, &what) {
             Ok(()) => return Ok(()),
-            Err(_e) if attempt == 1 && task_log_mentions_ignored_builds(state, task_id) => {
-                crate::tasks::push_task_log_pub(
-                    app,
-                    state,
-                    task_id,
-                    "pnpm 11 拦截了依赖构建脚本，正在批准 allowBuilds 后重试…",
-                )
-                .await;
+            Err(out) if attempt == 1 && mentions_ignored_builds(&out) => {
+                crate::log_info!("pnpm 拦截了依赖构建脚本，批准 allowBuilds 后重试");
                 ensure_build_scripts_allowed(&dir)?;
             }
-            Err(_e) if attempt == 1 && task_log_mentions_unexpected_store(state, task_id) => {
-                crate::tasks::push_task_log_pub(
-                    app,
-                    state,
-                    task_id,
-                    "pnpm 报告 store 位置不一致，正在重新链接 node_modules 后重试…",
-                )
-                .await;
-                relink_profile_store(app, state, task_id, target, &pnpm_prog).await?;
+            Err(out) if attempt == 1 && mentions_unexpected_store(&out) => {
+                crate::log_info!("pnpm 报告 store 位置不一致，重新链接后重试");
+                relink_profile_store_sync(state, target, &pnpm_prog)?;
             }
-            Err(e) => return Err(e),
+            Err(out) => return Err(format!("{what} 失败: {out}")),
         }
     }
     unreachable!("attempt loop covers both attempts")
+}
+
+/// Runs a piped child command synchronously, returning the last meaningful
+/// output lines on failure.
+fn run_command_sync(mut cmd: std::process::Command, what: &str) -> Result<(), String> {
+    let out = cmd.output().map_err(|e| format!("{what} 启动失败: {e}"))?;
+    if out.status.success() {
+        return Ok(());
+    }
+    let combined = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let tail: Vec<&str> = combined
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect();
+    let summary = tail
+        .iter()
+        .rev()
+        .take(3)
+        .rev()
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(" | ");
+    Err(if summary.is_empty() {
+        format!("退出码 {}", out.status)
+    } else {
+        summary
+    })
+}
+
+fn mentions_unexpected_store(out: &str) -> bool {
+    out.contains("ERR_PNPM_UNEXPECTED_STORE") || out.contains("Unexpected store location")
+}
+
+fn mentions_ignored_builds(out: &str) -> bool {
+    out.contains("ERR_PNPM_IGNORED_BUILDS") || out.contains("Ignored build scripts")
 }
 
 /// Reads the store a profile's `node_modules` is currently linked from, via
@@ -1699,31 +586,13 @@ fn store_paths_match(a: &str, b: &str) -> bool {
     a == b || a.starts_with(&format!("{b}/")) || b.starts_with(&format!("{a}/"))
 }
 
-/// Whether the task's streamed log mentions pnpm's unexpected-store failure
-/// (ERR_PNPM_UNEXPECTED_STORE / "Unexpected store location"). Fallback for
-/// the proactive `linked_store_dir` check, which only covers stores pnpm
-/// recorded in `.modules.yaml`.
-fn task_log_mentions_unexpected_store(state: &State<'_, AppState>, task_id: &str) -> bool {
-    let tasks = state.tasks.try_lock().map(|t| t.clone()).ok();
-    tasks
-        .and_then(|t| t.get(task_id).map(|t| t.logs.clone()))
-        .map(|logs| {
-            logs.iter().any(|l| {
-                l.contains("ERR_PNPM_UNEXPECTED_STORE") || l.contains("Unexpected store location")
-            })
-        })
-        .unwrap_or(false)
-}
-
 /// Relinks a profile's `node_modules` onto the launcher's pinned store.
 /// pnpm's own remedy for ERR_PNPM_UNEXPECTED_STORE is a plain reinstall,
 /// which re-imports the lockfile packages from the new store without
 /// touching package.json; routing it through `dsh plugin install` keeps the
 /// CLI's bundle reconciliation in the loop.
-async fn relink_profile_store(
-    app: &AppHandle,
+fn relink_profile_store_sync(
     state: &State<'_, AppState>,
-    task_id: &str,
     target: &PluginCliTarget<'_>,
     pnpm_prog: &std::path::Path,
 ) -> Result<(), String> {
@@ -1736,31 +605,10 @@ async fn relink_profile_store(
         &args,
         pnpm_prog,
     )?;
-    crate::tasks::run_streamed_command(
-        app,
-        state,
-        task_id,
-        cmd,
-        "dsh plugin install（重新链接 store）",
-    )
-    .await
+    run_command_sync(cmd, "dsh plugin install（重新链接 store）")
+        .map_err(|e| format!("dsh plugin install（重新链接 store） 失败: {e}"))
 }
 
-/// Whether the task's streamed log mentions pnpm's ignored-build-scripts
-/// failure (ERR_PNPM_IGNORED_BUILDS / "Ignored build scripts"). The error
-/// text returned by run_streamed_command only carries the last meaningful
-/// line, so we inspect the full log instead.
-fn task_log_mentions_ignored_builds(state: &State<'_, AppState>, task_id: &str) -> bool {
-    let tasks = state.tasks.try_lock().map(|t| t.clone()).ok();
-    tasks
-        .and_then(|t| t.get(task_id).map(|t| t.logs.clone()))
-        .map(|logs| {
-            logs.iter().any(|l| {
-                l.contains("ERR_PNPM_IGNORED_BUILDS") || l.contains("Ignored build scripts")
-            })
-        })
-        .unwrap_or(false)
-}
 
 /// Builds a `dsh plugin --profile <name> <pnpm args…>` invocation for an
 /// instance's own CLI version.
@@ -1783,7 +631,7 @@ fn dsh_plugin_command(
     profile: &str,
     pnpm_args: &[String],
     pnpm_prog: &std::path::Path,
-) -> Result<tokio::process::Command, String> {
+) -> Result<std::process::Command, String> {
     let bin = crate::process::version_bin(version_dir);
     if !crate::process::version_bin_ready(version_dir) {
         return Err(format!(
@@ -1792,8 +640,7 @@ fn dsh_plugin_command(
         ));
     }
 
-    let mut cmd = tokio::process::Command::new(crate::process::node());
-    crate::process::hide_console(&mut cmd);
+    let mut cmd = std::process::Command::new(crate::process::node());
     cmd.arg(&bin)
         .arg("plugin")
         .arg("--profile")
@@ -1993,71 +840,48 @@ pub(crate) fn ensure_build_scripts_allowed(dir: &std::path::Path) -> Result<(), 
     Ok(())
 }
 
-/// Ensure pnpm is available (delegates to the same logic as version installs).
-async fn ensure_pnpm_for_plugins(
-    app: &AppHandle,
-    state: &State<'_, AppState>,
-    task_id: &str,
-) -> Result<std::path::PathBuf, String> {
-    crate::tasks::ensure_pnpm_pub(app, state, task_id).await
-}
-
-/// Ensure cordis.patch.yml has an insert row for the plugin (non-bundle
-/// plugins need an explicit mount row).
-///
-/// The file is a top-level YAML array. A fresh profile ships as comments +
-/// a `[]` empty-array placeholder — we must replace that placeholder with a
-/// block sequence (`- insert: ...`) instead of appending to it (appending
-/// would produce two YAML documents and fail to parse).
-fn ensure_cordis_insert(dir: &std::path::Path, plugin_id: &str) -> Result<(), String> {
-    let cordis_id = cordis_id_of(plugin_id);
-    let path = dir.join("cordis.patch.yml");
-    let raw = if path.exists() {
-        std::fs::read_to_string(&path).map_err(|e| format!("读取 cordis.patch.yml 失败: {e}"))?
-    } else {
-        String::new()
+/// Resolve a pnpm executable on the required major, bootstrapping the
+/// pinned one into the data dir when needed (same policy as version
+/// installs, but synchronous and logging to the app log instead of a task).
+fn ensure_pnpm_for_plugins(state: &State<'_, AppState>) -> Result<std::path::PathBuf, String> {
+    use std::process::Command;
+    let major = crate::tasks::REQUIRED_PNPM_MAJOR;
+    let probe = |prog: &std::path::Path| -> bool {
+        Command::new(prog)
+            .arg("--version")
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .and_then(|o| crate::tasks::pnpm_major_pub(&String::from_utf8_lossy(&o.stdout)))
+            .map(|m| m == major)
+            .unwrap_or(false)
     };
-    // Already mounted (insert row or a config block for the id)?
-    if raw.contains(&format!("id: {cordis_id}")) {
-        return Ok(());
+    let system = std::path::PathBuf::from(crate::process::pnpm());
+    if probe(&system) {
+        return Ok(system);
     }
-
-    let entry = format!("- insert:\n    - id: {cordis_id}\n      name: '{plugin_id}'\n");
-
-    // Strip comment lines and blank lines to find the actual document body.
-    let body: String = raw
-        .lines()
-        .filter(|l| {
-            let t = l.trim();
-            !t.is_empty() && !t.starts_with('#')
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    let body_trimmed = body.trim();
-
-    let out = if body_trimmed.is_empty() || body_trimmed == "[]" {
-        // Empty document / empty-array placeholder: keep the comment header
-        // and replace the `[]` with the new entry.
-        let header: String = raw
-            .lines()
-            .take_while(|l| {
-                let t = l.trim();
-                t.is_empty() || t.starts_with('#')
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-        if header.trim().is_empty() {
-            entry
-        } else {
-            format!("{}\n{}", header.trim_end(), entry)
-        }
-    } else {
-        // Real entries exist: append a block entry.
-        format!("{}\n{}", raw.trim_end(), entry)
-    };
-
-    std::fs::write(&path, out).map_err(|e| format!("写入 cordis.patch.yml 失败: {e}"))?;
-    Ok(())
+    let tools_dir = state.data_dir.join("tools");
+    let local = tools_dir.join("pnpm");
+    if local.exists() && probe(&local) {
+        return Ok(local);
+    }
+    std::fs::create_dir_all(&tools_dir).map_err(|e| format!("创建工具目录失败: {e}"))?;
+    crate::log_info!("正在安装 DSH profile 所需的 pnpm@{major}…");
+    let out = Command::new(crate::process::npm())
+        .args(["install", "--global", "--prefix"])
+        .arg(&tools_dir)
+        .arg(format!("pnpm@{major}"))
+        .output()
+        .map_err(|e| format!("pnpm 安装启动失败: {e}"))?;
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr);
+        let last = err.lines().last().unwrap_or("未知错误").to_string();
+        return Err(format!("pnpm 安装失败: {last}"));
+    }
+    if !local.exists() {
+        return Err(format!("pnpm 安装完成但未找到可执行文件: {}", local.display()));
+    }
+    Ok(local)
 }
 
 #[cfg(test)]
@@ -2070,133 +894,6 @@ mod tests {
         assert_eq!(cordis_id_of("@dsh-external/dsh-sidechain"), "dsh-sidechain");
         assert_eq!(cordis_id_of("dsh-better-sidebar"), "dsh-better-sidebar");
         assert_eq!(cordis_id_of("@canglongcl/dsh-web-review"), "dsh-web-review");
-    }
-
-    #[test]
-    fn parse_awesome_install_npm_and_github() {
-        // npm, bare scoped package.
-        assert_eq!(
-            parse_awesome_install("dsh plugin --profile web add @furongjun1999/dsh-memory"),
-            Some("@furongjun1999/dsh-memory".to_string())
-        );
-        // npm, unscoped with a version suffix (kept verbatim).
-        assert_eq!(
-            parse_awesome_install("dsh plugin --profile web add lodash@4.17.21"),
-            Some("lodash@4.17.21".to_string())
-        );
-        // github: spec normalised to owner/repo.
-        assert_eq!(
-            parse_awesome_install("dsh plugin --profile web add github:0imzero/dsh-workspace-menu"),
-            Some("github:0imzero/dsh-workspace-menu".to_string())
-        );
-        // github: with trailing .git / slash stripped.
-        assert_eq!(
-            parse_awesome_install("dsh plugin --profile web add github:o/r.git"),
-            Some("github:o/r".to_string())
-        );
-        // A different profile name is fine; only the add target matters.
-        assert_eq!(
-            parse_awesome_install("dsh plugin --profile tui add @scope/x"),
-            Some("@scope/x".to_string())
-        );
-        // Monorepo subdir: `#path:/…` normalised (leading slash stripped).
-        assert_eq!(
-            parse_awesome_install(
-                "dsh plugin --profile web add github:ayahunter/dsh-trail#path:/packages/bundle"
-            ),
-            Some("github:ayahunter/dsh-trail#path:packages/bundle".to_string())
-        );
-        // Subdir without the leading slash is kept as-is.
-        assert_eq!(
-            parse_awesome_install(
-                "dsh plugin --profile web add github:DamonKoy/dsh-web-ui#path:packages/dsh-ssh"
-            ),
-            Some("github:DamonKoy/dsh-web-ui#path:packages/dsh-ssh".to_string())
-        );
-    }
-
-    #[test]
-    fn parse_github_id_splits_repo_and_subpath() {
-        assert_eq!(
-            parse_github_id("github:2768651338/dsh-effort-slider"),
-            Some(("2768651338/dsh-effort-slider".to_string(), None))
-        );
-        assert_eq!(
-            parse_github_id("github:DamonKoy/dsh-web-ui#path:packages/dsh-task-board"),
-            Some((
-                "DamonKoy/dsh-web-ui".to_string(),
-                Some("packages/dsh-task-board".to_string())
-            ))
-        );
-        // Not github-shaped.
-        assert_eq!(parse_github_id("@dsh-plugin/dsh-loader"), None);
-        // A committish fragment is not identity — rejected.
-        assert_eq!(parse_github_id("github:o/r#main"), None);
-        assert_eq!(parse_github_id("github:o/r#path:"), None);
-        assert_eq!(parse_github_id("github:onlyowner"), None);
-    }
-
-    #[test]
-    fn github_install_spec_combines_ref_and_path() {
-        assert_eq!(
-            github_install_spec("o/r", "b95d997a", None),
-            "github:o/r#b95d997a"
-        );
-        assert_eq!(
-            github_install_spec("o/r", "v1.2.3", Some("packages/x")),
-            "github:o/r#v1.2.3&path:packages/x"
-        );
-    }
-
-    #[test]
-    fn resolve_installed_name_finds_real_package_name() {
-        let dir = std::env::temp_dir().join(format!("dsh-test-resolve-{}", new_id("t")));
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(
-            dir.join("package.json"),
-            r#"{
-  "dependencies": {
-    "dsh-effort-slider": "github:2768651338/dsh-effort-slider#b95d997a",
-    "@dsh-plugin/dsh-loader": "1.3.2",
-    "dsh-task-board": "github:DamonKoy/dsh-web-ui#v0.3.0&path:packages/dsh-task-board"
-  }
-}"#,
-        )
-        .unwrap();
-        // git-hosted: spec recorded verbatim as the value.
-        assert_eq!(
-            resolve_installed_name(
-                &dir,
-                "github:2768651338/dsh-effort-slider",
-                "github:2768651338/dsh-effort-slider#b95d997a"
-            ),
-            Some("dsh-effort-slider".to_string())
-        );
-        // git-hosted monorepo with a normalised (non-verbatim) value: the
-        // github:owner/repo prefix still matches.
-        assert_eq!(
-            resolve_installed_name(
-                &dir,
-                "github:DamonKoy/dsh-web-ui#path:packages/dsh-task-board",
-                "github:DamonKoy/dsh-web-ui#deadbeef&path:packages/dsh-task-board"
-            ),
-            Some("dsh-task-board".to_string())
-        );
-        // npm: the id is the key; the spec carries @version.
-        assert_eq!(
-            resolve_installed_name(
-                &dir,
-                "@dsh-plugin/dsh-loader",
-                "@dsh-plugin/dsh-loader@1.3.2"
-            ),
-            Some("@dsh-plugin/dsh-loader".to_string())
-        );
-        // Nothing matches.
-        assert_eq!(
-            resolve_installed_name(&dir, "lodash", "lodash@4.17.21"),
-            None
-        );
-        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
@@ -2216,7 +913,7 @@ mod tests {
 
     #[test]
     fn linked_store_dir_reads_modules_yaml() {
-        let dir = std::env::temp_dir().join(format!("dsh-test-modules-{}", new_id("t")));
+        let dir = std::env::temp_dir().join(format!("dsh-test-modules-{}", uuid::Uuid::new_v4()));
         let nm = dir.join("node_modules");
         std::fs::create_dir_all(&nm).unwrap();
         std::fs::write(
@@ -2231,94 +928,6 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
         // Missing file → None (fresh profile, nothing to relink).
         assert_eq!(linked_store_dir(&dir), None);
-    }
-
-    #[test]
-    fn parse_awesome_install_rejects_undrivable() {
-        assert_eq!(parse_awesome_install(""), None);
-        assert_eq!(parse_awesome_install("dsh plugin"), None);
-        assert_eq!(parse_awesome_install("dsh plugin add"), None);
-        // A non-tarball URL is not a registry/github spec we resolve.
-        assert_eq!(
-            parse_awesome_install("dsh plugin --profile web add https://example.com/x"),
-            None
-        );
-        // github: with a missing repo part.
-        assert_eq!(
-            parse_awesome_install("dsh plugin add github:onlyowner"),
-            None
-        );
-        // github: with too many path segments.
-        assert_eq!(parse_awesome_install("dsh plugin add github:a/b/c"), None);
-    }
-
-    #[test]
-    fn parse_awesome_install_accepts_tgz_urls() {
-        // Quoted tarball URL (GitHub release asset).
-        assert_eq!(
-            parse_awesome_install(
-                "dsh plugin --profile web add \"https://github.com/Crosery/dsh-viewer/releases/latest/download/dsh-viewer.tgz\""
-            ),
-            Some(
-                "tgz:https://github.com/Crosery/dsh-viewer/releases/latest/download/dsh-viewer.tgz"
-                    .to_string()
-            )
-        );
-        assert_eq!(
-            parse_awesome_install("dsh plugin add https://example.com/pkg.tar.gz"),
-            Some("tgz:https://example.com/pkg.tar.gz".to_string())
-        );
-    }
-
-    #[test]
-    fn awesome_to_market_maps_fields() {
-        let raw = r#"{
-            "name": "dsh-memory",
-            "url": "https://github.com/FuRongJun-1999/dsh-memory",
-            "category": "agi",
-            "description": { "en": "White-box AGI.", "zh": "白箱AGI架构探索。" },
-            "npm": "@furongjun1999/dsh-memory",
-            "stars": 35,
-            "downloads": 1856,
-            "install": "dsh plugin --profile web add @furongjun1999/dsh-memory",
-            "added": "2026-08-14"
-        }"#;
-        let aw: AwesomePlugin = serde_json::from_str(raw).unwrap();
-        let mp = awesome_to_market(&aw).expect("install resolves");
-        assert_eq!(mp.id, "@furongjun1999/dsh-memory");
-        assert_eq!(mp.name, "dsh-memory");
-        assert_eq!(mp.source, PluginSource::AwesomeDshPlugin);
-        assert_eq!(mp.category.as_deref(), Some("agi"));
-        assert_eq!(mp.stars, Some(35));
-        assert_eq!(mp.downloads, Some(1856));
-        assert_eq!(
-            mp.urls.as_ref().unwrap().repository.as_deref(),
-            Some("https://github.com/FuRongJun-1999/dsh-memory")
-        );
-        match mp.description {
-            Some(MarketDescription::Localized(list)) => {
-                assert_eq!(list.len(), 2);
-                assert!(list.iter().any(|d| d.language == "zh"));
-            }
-            other => panic!("expected localized description, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn awesome_to_market_github_entry() {
-        let raw = r#"{
-            "name": "dsh-workspace-menu",
-            "url": "https://github.com/0imzero/dsh-workspace-menu",
-            "npm": null,
-            "stars": null,
-            "downloads": null,
-            "install": "dsh plugin --profile web add github:0imzero/dsh-workspace-menu"
-        }"#;
-        let aw: AwesomePlugin = serde_json::from_str(raw).unwrap();
-        let mp = awesome_to_market(&aw).expect("github install resolves");
-        assert_eq!(mp.id, "github:0imzero/dsh-workspace-menu");
-        assert!(mp.description.is_none(), "no description block");
-        assert_eq!(mp.stars, None);
     }
 
     #[test]
@@ -2368,102 +977,6 @@ mod tests {
     }
 
     #[test]
-    fn profile_lock_key_matches_paths_that_denote_one_profile() {
-        let a = std::path::Path::new("/Users/lab/profiles/web");
-        let b = std::path::Path::new("/Users/lab/profiles/web");
-        assert_eq!(profile_lock_key(a), profile_lock_key(b));
-        // Different profiles under one HOME never share a lock.
-        let other = std::path::Path::new("/Users/lab/profiles/tui");
-        assert_ne!(profile_lock_key(a), profile_lock_key(other));
-    }
-
-    #[test]
-    fn ensure_cordis_insert_only_once() {
-        let dir = std::env::temp_dir().join(format!("dsh-plugins-test-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).unwrap();
-        ensure_cordis_insert(&dir, "@dsh-plugin/dsh-auxiliary").unwrap();
-        ensure_cordis_insert(&dir, "@dsh-plugin/dsh-auxiliary").unwrap();
-        let raw = std::fs::read_to_string(dir.join("cordis.patch.yml")).unwrap();
-        assert_eq!(raw.matches("- insert:").count(), 1, "raw: {raw}");
-        assert!(raw.contains("id: dsh-auxiliary"));
-        std::fs::remove_dir_all(&dir).ok();
-    }
-
-    #[test]
-    fn manifest_lists_bundle_reads_the_cli_reconciled_layer_list() {
-        // Bundle registration is the CLI's verdict: after `dsh plugin add`
-        // reconciles dsh.profile.bundles, the launcher only reads it back to
-        // decide whether an extra cordis insert row is needed.
-        let dir = std::env::temp_dir().join(format!("dsh-plugins-test-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).unwrap();
-
-        // No manifest yet: the default has an empty bundle list.
-        assert!(!manifest_lists_bundle(&dir, "@dsh-plugin/dsh-auxiliary").unwrap());
-
-        // Reconciled into the layer stack -> listed.
-        std::fs::write(
-            dir.join("package.json"),
-            r#"{"private":true,"dependencies":{"@dsh-plugin/dsh-auxiliary":"^0.5.1","@dsh-plugin/plain":"^1.0.0"},"dsh":{"profile":{"bundles":["@deepseek-ai/dsh-base","@dsh-plugin/dsh-auxiliary"]}}}"#,
-        )
-        .unwrap();
-        assert!(manifest_lists_bundle(&dir, "@dsh-plugin/dsh-auxiliary").unwrap());
-        // A dependency the CLI did not reconcile (no dsh.bundle.patch) needs
-        // the explicit insert row instead.
-        assert!(!manifest_lists_bundle(&dir, "@dsh-plugin/plain").unwrap());
-
-        std::fs::remove_dir_all(&dir).ok();
-    }
-
-    #[test]
-    fn ensure_cordis_insert_replaces_empty_array_placeholder() {
-        // The real-world bug: a fresh profile ships comments + `[]` and the
-        // first insert row must REPLACE `[]`, not append after it (two YAML
-        // documents would otherwise fail to parse).
-        let dir = std::env::temp_dir().join(format!("dsh-plugins-test-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(
-            dir.join("cordis.patch.yml"),
-            "# cordis.patch.yml\n# a top-level YAML array of load-order\n# overrides\n[]\n",
-        )
-        .unwrap();
-        ensure_cordis_insert(&dir, "@dsh-plugin/dsh-auxiliary").unwrap();
-        let raw = std::fs::read_to_string(dir.join("cordis.patch.yml")).unwrap();
-        assert!(raw.contains("# cordis.patch.yml"), "header kept: {raw}");
-        assert!(!raw.contains("[]"), "placeholder replaced: {raw}");
-        assert!(raw.contains("- insert:"), "raw: {raw}");
-        assert!(raw.contains("id: dsh-auxiliary"), "raw: {raw}");
-        // The body must be a single valid block sequence.
-        let body: String = raw
-            .lines()
-            .filter(|l| !l.trim().starts_with('#') && !l.trim().is_empty())
-            .collect();
-        assert!(body.starts_with("- insert:"), "single sequence: {body}");
-        std::fs::remove_dir_all(&dir).ok();
-    }
-
-    #[test]
-    fn set_disabled_row_replaces_empty_array_placeholder() {
-        let raw = "# header\n# comment\n[]\n";
-        let out = set_disabled_row(raw, "dsh-auxiliary", false);
-        assert!(out.contains("# header"), "header kept: {out}");
-        assert!(!out.contains("[]"), "placeholder dropped: {out}");
-        assert!(out.contains("- id: dsh-auxiliary"), "out: {out}");
-        assert!(out.contains("  disabled: true"), "out: {out}");
-    }
-
-    #[test]
-    fn set_disabled_row_empty_again_restores_placeholder() {
-        // Disabling then re-enabling the only entry should leave a valid
-        // document again (comment header + `[]`), not an empty file.
-        let raw = "# header\n[]\n";
-        let off = set_disabled_row(raw, "dsh-auxiliary", false);
-        assert!(!off.contains("[]"));
-        let on = set_disabled_row(&off, "dsh-auxiliary", true);
-        assert!(on.contains("[]"), "placeholder restored: {on}");
-        assert!(!on.contains("dsh-auxiliary"), "entry removed: {on}");
-    }
-
-    #[test]
     fn strip_cordis_rows_removes_insert_and_disabled_blocks() {
         // A plugin mounted via an insert row plus a disabled row for another
         // plugin must leave the other plugin intact.
@@ -2483,93 +996,8 @@ mod tests {
         assert!(!out.contains("dsh-auxiliary"), "entry removed: {out}");
     }
 
-    #[test]
-    fn relationship_type_alias_roundtrip() {
-        // The market JSON uses `type`, the frontend expects `kind`.
-        let raw = r#"{"type":"dependency","id":"@dsh-plugin/dsh-loader","versions":">=1.3.0"}"#;
-        let rel: MarketPluginRelationship = serde_json::from_str(raw).unwrap();
-        assert_eq!(rel.kind, "dependency");
-        assert_eq!(rel.id, "@dsh-plugin/dsh-loader");
-        // Serialized back out it must be `kind` (frontend contract).
-        let out = serde_json::to_string(&rel).unwrap();
-        assert!(out.contains("\"kind\":\"dependency\""), "out: {out}");
-        assert!(!out.contains("\"type\":"), "out: {out}");
-    }
-
     // Live network smoke tests (skipped by default; run with
     // `cargo test plugins::tests::live_ -- --ignored`).
-    #[tokio::test]
-    #[ignore]
-    async fn live_fetch_market_and_versions() {
-        let plugins = fetch_plugin_market(None).await.unwrap();
-        assert!(!plugins.is_empty(), "market must return plugins");
-        // The catalog must contain the loader plugin.
-        assert!(
-            plugins.iter().any(|p| p.id == "@dsh-plugin/dsh-loader"),
-            "loader missing from market"
-        );
-        // Every relationship must round-trip to `kind` for the frontend.
-        for p in &plugins {
-            if let Some(rels) = &p.relationship {
-                for r in rels {
-                    let out = serde_json::to_string(r).unwrap();
-                    assert!(
-                        out.contains("\"kind\":"),
-                        "relationship of {} must serialize kind: {out}",
-                        p.id
-                    );
-                    assert!(
-                        !out.contains("\"type\":"),
-                        "relationship of {} must not leak `type`: {out}",
-                        p.id
-                    );
-                }
-            }
-        }
-        // npm-based stable versions for a known plugin.
-        let stable = npm_versions("@dsh-plugin/dsh-auxiliary", &PluginChannel::Stable)
-            .await
-            .unwrap();
-        assert!(!stable.is_empty());
-        assert!(stable.iter().any(|v| v.is_default));
-        let beta = npm_versions("@dsh-plugin/dsh-auxiliary", &PluginChannel::Beta)
-            .await
-            .unwrap();
-        assert!(!beta.is_empty());
-        // alpha: GitHub commit channel (client_id boosts the rate limit).
-        let page1 = fetch_plugin_versions(
-            "@dsh-plugin/dsh-auxiliary".to_string(),
-            PluginChannel::Alpha,
-            Some(1),
-        )
-        .await
-        .unwrap();
-        assert!(
-            !page1.versions.is_empty(),
-            "alpha commits must be fetchable"
-        );
-        assert!(page1.versions[0].is_default, "first commit is the default");
-        // Pagination: page 2 must return a disjoint set when has_more.
-        if page1.has_more {
-            let page2 = fetch_plugin_versions(
-                "@dsh-plugin/dsh-auxiliary".to_string(),
-                PluginChannel::Alpha,
-                Some(2),
-            )
-            .await
-            .unwrap();
-            assert!(!page2.versions.is_empty());
-            assert!(
-                page2
-                    .versions
-                    .iter()
-                    .all(|v| !page1.versions.iter().any(|a| a.version == v.version)),
-                "page 2 must not repeat page 1 commits"
-            );
-            assert!(!page2.versions[0].is_default, "only page 1 has the default");
-        }
-    }
-
     #[test]
     fn ensure_build_scripts_allowed_converts_placeholders_and_adds_sections() {
         let dir = std::env::temp_dir().join(format!("dsh-plugins-test-{}", uuid::Uuid::new_v4()));

@@ -129,29 +129,15 @@ async function onAutostartChange(value: string | number | boolean | Record<strin
   await patchSettings({ autostart: Boolean(value) })
 }
 
-// --- SKILL source repos (issue #10) ---------------------------------------------
+// --- External terminal preference -----------------------------------------------
 
-const newSkillRepo = ref('')
-const skillRepoBusy = ref(false)
+const TERMINAL_OPTIONS = computed<{ value: string; label: string }[]>(() => [
+  { value: 'system', label: t('settings.terminal.system') },
+  { value: 'ghostty', label: t('settings.terminal.ghostty') },
+])
 
-async function onAddSkillRepo() {
-  const url = newSkillRepo.value.trim()
-  if (!url) return
-  if (store.settings.skill_repos.includes(url)) {
-    Message.warning(t('settings.skillRepoExists'))
-    return
-  }
-  skillRepoBusy.value = true
-  try {
-    await patchSettings({ skill_repos: [...store.settings.skill_repos, url] })
-    newSkillRepo.value = ''
-  } finally {
-    skillRepoBusy.value = false
-  }
-}
-
-async function onRemoveSkillRepo(url: string) {
-  await patchSettings({ skill_repos: store.settings.skill_repos.filter((r) => r !== url) })
+async function onTerminalChange(value: string | number | boolean | Record<string, unknown> | (string | number | boolean | Record<string, unknown>)[]) {
+  await patchSettings({ terminal: String(value) })
 }
 
 // --- Proxy settings -----------------------------------------------------------
@@ -196,7 +182,6 @@ const sections = computed(() => [
   { key: 'general', label: t('settings.general') },
   { key: 'shortcuts', label: t('settings.shortcuts.title') },
   { key: 'proxy', label: t('settings.proxy.title') },
-  { key: 'skillRepos', label: t('settings.skillRepos.title') },
   { key: 'update', label: t('settings.update.title') },
   { key: 'dataDir', label: t('settings.dataDir.title') },
 ])
@@ -272,6 +257,18 @@ function scrollToSection(key: string) {
           </a-select>
           <p class="settings-hint">{{ t('settings.logLevel.hint') }}</p>
         </a-form-item>
+        <a-form-item :label="t('settings.terminal.label')">
+          <a-select
+            :model-value="store.settings.terminal"
+            style="width: 220px"
+            @change="onTerminalChange"
+          >
+            <a-option v-for="o in TERMINAL_OPTIONS" :key="o.value" :value="o.value">
+              {{ o.label }}
+            </a-option>
+          </a-select>
+          <p class="settings-hint">{{ t('settings.terminal.hint') }}</p>
+        </a-form-item>
       </a-form>
     </div>
 
@@ -340,39 +337,6 @@ function scrollToSection(key: string) {
           <p class="settings-hint">{{ t('settings.proxy.applyDshHint') }}</p>
         </a-form-item>
       </a-form>
-    </div>
-
-    <div :ref="(el: unknown) => setSectionRef('skillRepos', el)" class="dl-card section-anchor">
-      <div class="dl-card-title">
-        <h3>{{ t('settings.skillRepos.title') }}</h3>
-      </div>
-      <p class="settings-hint">{{ t('settings.skillRepos.hint') }}</p>
-      <div class="skill-repo-add">
-        <a-input
-          v-model="newSkillRepo"
-          :placeholder="t('settings.skillRepos.placeholder')"
-          allow-clear
-          @press-enter="onAddSkillRepo"
-        />
-        <a-button :loading="skillRepoBusy" :disabled="!newSkillRepo.trim()" @click="onAddSkillRepo">
-          {{ t('settings.skillRepos.add') }}
-        </a-button>
-      </div>
-      <a-list :data="store.settings.skill_repos" size="small">
-        <template #item="{ item }">
-          <a-list-item>
-            <span class="skill-repo-url">{{ item }}</span>
-            <template #actions>
-              <a-button size="mini" status="danger" type="text" @click="onRemoveSkillRepo(item)">
-                {{ t('instances.table.delete') }}
-              </a-button>
-            </template>
-          </a-list-item>
-        </template>
-        <template #empty>
-          <a-empty :description="t('settings.skillRepos.empty')" />
-        </template>
-      </a-list>
     </div>
 
     <div :ref="(el: unknown) => setSectionRef('update', el)" class="dl-card section-anchor">
@@ -478,16 +442,6 @@ function scrollToSection(key: string) {
 
 .section-anchor {
   scroll-margin-top: 12px;
-}
-.skill-repo-add {
-  display: flex;
-  gap: 8px;
-  margin: 12px 0;
-}
-
-.skill-repo-url {
-  font-size: 13px;
-  word-break: break-all;
 }
 .settings-form {
   max-width: 560px;

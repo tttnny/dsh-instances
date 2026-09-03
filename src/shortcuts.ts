@@ -6,14 +6,14 @@
  * event names and the route mapping so both sides stay in sync:
  *
  * - navigate events: `{ route: string }` or a plain route-name string.
- *   Accepted routes: home / download / settings / tasks / instances.
+ *   Accepted routes: home / instances / homes / versions / tasks / settings.
  * - refresh events: no payload; the frontend re-reads instance/task status.
  *
  * Multiple event names are accepted for forward/backward compatibility with
  * whichever name t3 finally emits (`menu-navigate` is canonical).
  */
 
-export type ShortcutRoute = 'home' | 'download' | 'settings' | 'tasks' | 'instances'
+export type ShortcutRoute = 'home' | 'instances' | 'homes' | 'versions' | 'tasks' | 'settings'
 
 /** Canonical first, aliases after. */
 export const MENU_NAVIGATE_EVENTS = ['menu-navigate', 'navigate', 'app-navigate'] as const
@@ -38,8 +38,9 @@ const MOD = '\u2318 / Ctrl'
 export const SHORTCUT_DOCS: ShortcutDoc[] = [
   { labelKey: 'settings.shortcuts.goHome', keys: [MOD, '1'] },
   { labelKey: 'settings.shortcuts.goInstances', keys: [MOD, '2'] },
-  { labelKey: 'settings.shortcuts.goTasks', keys: [MOD, '3'] },
-  { labelKey: 'settings.shortcuts.goDownload', keys: [MOD, '4'] },
+  { labelKey: 'settings.shortcuts.goHomes', keys: [MOD, '3'] },
+  { labelKey: 'settings.shortcuts.goVersions', keys: [MOD, '4'] },
+  { labelKey: 'settings.shortcuts.goTasks', keys: [MOD, '5'] },
   { labelKey: 'settings.shortcuts.openSettings', keys: [MOD, ','] },
   { labelKey: 'settings.shortcuts.goTasksAlt', keys: [MOD, 'K'] },
   { labelKey: 'settings.shortcuts.showMain', keys: [MOD, '0'], native: true },
@@ -51,14 +52,16 @@ export const SHORTCUT_DOCS: ShortcutDoc[] = [
 const NAVIGATE_TARGETS: Record<string, ShortcutRoute> = {
   home: 'home',
   '/': 'home',
-  download: 'download',
-  '/download': 'download',
   settings: 'settings',
   '/settings': 'settings',
   tasks: 'tasks',
   '/tasks': 'tasks',
   instances: 'instances',
   '/instances': 'instances',
+  homes: 'homes',
+  '/homes': 'homes',
+  versions: 'versions',
+  '/versions': 'versions',
 }
 
 /** Normalises a menu-event payload to a known route, or null when unknown. */
@@ -76,12 +79,10 @@ export function resolveMenuRoute(payload: unknown): ShortcutRoute | null {
   const key = raw.trim()
   const direct = NAVIGATE_TARGETS[key]
   if (direct) return direct
-  // Download sub-routes (download-create / download-plugins / …) map back
-  // to the download section; instance-edit maps to the instance list.
+  // instance-edit maps to the instance list.
   // t6: strip leading slashes first — backend emits full paths such as
-  // `/download/create` and `/instances/:id`, which otherwise miss the match.
+  // `/instances/:id`, which otherwise miss the match.
   const norm = key.replace(/^\/+/, '')
-  if (norm.startsWith('download')) return 'download'
   if (norm.startsWith('instance')) return 'instances'
   return null
 }
@@ -104,8 +105,8 @@ export function isEditableTarget(target: EventTarget | null): boolean {
  * Global keydown dispatcher for in-app shortcuts.
  *
  * Digit mapping mirrors the native menu (app_menu.rs "显示" submenu):
- * - Cmd/Ctrl+1 → home, Cmd/Ctrl+2 → instances, Cmd/Ctrl+3 → tasks,
- *   Cmd/Ctrl+4 → download
+ * - Cmd/Ctrl+1 → home, Cmd/Ctrl+2 → instances, Cmd/Ctrl+3 → homes,
+ *   Cmd/Ctrl+4 → versions, Cmd/Ctrl+5 → tasks
  * - Cmd/Ctrl+, → settings (macOS Preferences convention)
  * - Cmd/Ctrl+K → tasks (legacy alias)
  * - Cmd/Ctrl+R → in-app status refresh (NOT a page reload)
@@ -145,10 +146,13 @@ export function handleAppKeydown(e: KeyboardEvent, actions: ShortcutActions): bo
       actions.go('instances')
       return true
     case '3':
-      actions.go('tasks')
+      actions.go('homes')
       return true
     case '4':
-      actions.go('download')
+      actions.go('versions')
+      return true
+    case '5':
+      actions.go('tasks')
       return true
     case ',':
       actions.go('settings')

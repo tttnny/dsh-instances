@@ -7,6 +7,7 @@ import { api } from '@/api'
 import { useLauncherStore } from '@/stores/launcher'
 import type { DshInstance } from '@/api/types'
 import launcherDefaultIcon from '@/assets/launcher-icon.png'
+import NewInstanceDialog from '@/components/NewInstanceDialog.vue'
 
 const router = useRouter()
 const { t } = useI18n()
@@ -31,12 +32,6 @@ async function loadIcons() {
   }
   iconMap.value = next
 }
-
-watch(
-  () => store.instances.map((i) => `${i.id}:${i.icon ?? ''}`).join(','),
-  loadIcons,
-  { immediate: true },
-)
 
 watch(
   () => store.instances.map((i) => `${i.id}:${i.icon ?? ''}`).join(','),
@@ -91,10 +86,6 @@ watch(
   () => ensureProfiles(),
   { immediate: true },
 )
-
-onMounted(() => {
-  ensureProfiles()
-})
 
 function touchLastUsed(id: string) {
   if (store.settings.last_instance_id === id) return
@@ -268,7 +259,23 @@ async function onViewLog(inst: DshInstance) {
 }
 
 function goNew() {
-  void router.push({ name: 'download-create' }).catch(() => undefined)
+  newVisible.value = true
+}
+
+const newVisible = ref(false)
+
+const terminalBusy = ref<Record<string, boolean>>({})
+
+async function onOpenTerminal(inst: DshInstance) {
+  terminalBusy.value[inst.id] = true
+  try {
+    const label = await api.openInstanceTerminal(inst.id)
+    Message.success(t('home.terminalOpened', { label }))
+  } catch (e) {
+    Message.error(String(e))
+  } finally {
+    terminalBusy.value[inst.id] = false
+  }
 }
 
 function goManage() {
@@ -289,7 +296,7 @@ function goManage() {
       <span class="home-count">{{ t('home.instanceCount', { count: filteredInstances.length }) }}</span>
       <span class="home-spacer" />
       <a-button @click="goManage">{{ t('home.instanceList') }}</a-button>
-      <a-button type="primary" @click="goNew">{{ t('instances.newInstance') }}</a-button>
+      <a-button type="primary" @click="goNew">{{ t('home.newInstance') }}</a-button>
     </div>
 
     <!-- Empty state -->
@@ -298,11 +305,11 @@ function goManage() {
         <template #image>
           <div class="empty-title">{{ t('instances.emptyTitle') }}</div>
         </template>
-        <a-button type="primary" @click="goNew">{{ t('instances.newInstance') }}</a-button>
+        <a-button type="primary" @click="goNew">{{ t('home.newInstance') }}</a-button>
       </a-empty>
     </div>
     <div v-else-if="filteredInstances.length === 0" class="dl-card home-empty">
-      <a-empty :description="t('plugins.noMatch')" />
+      <a-empty :description="t('common.loading')" />
     </div>
 
     <!-- Instance card wall -->
@@ -411,6 +418,14 @@ function goManage() {
           <a-button size="small" type="text" @click="goSettings(inst)">
             {{ t('instances.table.edit') }}
           </a-button>
+          <a-button
+            size="small"
+            type="text"
+            :loading="terminalBusy[inst.id]"
+            @click="onOpenTerminal(inst)"
+          >
+            {{ t('home.openTerminal') }}
+          </a-button>
           <span class="foot-spacer" />
           <a-button
             size="small"
@@ -431,6 +446,7 @@ function goManage() {
         </div>
       </div>
     </div>
+    <NewInstanceDialog v-model:visible="newVisible" />
   </div>
 </template>
 

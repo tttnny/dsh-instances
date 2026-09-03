@@ -4,15 +4,11 @@ mod commands;
 mod config;
 mod doctor;
 mod icons;
-mod mcp;
-mod modpack;
 mod plugins;
 mod process;
 mod proxy;
 mod runtime;
-mod skills;
 mod tasks;
-mod terminal;
 mod tray;
 mod update;
 mod windows;
@@ -27,14 +23,6 @@ pub struct AppState {
     pub config: StdMutex<config::Config>,
     pub running: tokio::sync::Mutex<HashMap<String, process::RunningInstance>>,
     pub tasks: tokio::sync::Mutex<HashMap<String, tasks::TaskInfo>>,
-    /// One mutex per profile directory, serializing plugin installs and
-    /// removals against that profile. `dsh plugin` (pnpm + the bundle
-    /// reconcile) is a read-modify-write cycle over the profile's
-    /// package.json, so concurrent runs against one profile overwrite each
-    /// other and only the last plugin survives.
-    pub profile_locks: tokio::sync::Mutex<HashMap<String, std::sync::Arc<tokio::sync::Mutex<()>>>>,
-    /// Embedded PTY terminal sessions per instance id.
-    pub terminals: tokio::sync::Mutex<HashMap<String, terminal::TerminalSession>>,
 }
 
 /// Extracts a `dsh-launcher://…` deep link from process arguments.
@@ -139,8 +127,6 @@ pub fn run() {
                 config: StdMutex::new(cfg),
                 running: tokio::sync::Mutex::new(HashMap::new()),
                 tasks: tokio::sync::Mutex::new(HashMap::new()),
-                profile_locks: tokio::sync::Mutex::new(HashMap::new()),
-                terminals: tokio::sync::Mutex::new(HashMap::new()),
             });
 
             // System tray with dynamic menu.
@@ -194,35 +180,13 @@ pub fn run() {
             icons::set_instance_icon,
             icons::clear_instance_icon,
             icons::read_instance_icon,
-            skills::list_instance_skills,
-            skills::install_skill_repo,
-            skills::list_repo_skills,
-            skills::check_skill_updates,
-            skills::import_skill_zip,
-            skills::update_skill,
-            skills::delete_skill,
-            skills::import_skill_file,
-            skills::create_skill,
-            mcp::list_mcp_servers,
-            mcp::save_mcp_server,
-            mcp::delete_mcp_server,
             commands::get_settings,
             commands::update_settings,
+            commands::open_instance_terminal,
             update::check_launcher_update,
-            plugins::fetch_plugin_market,
-            plugins::fetch_plugin_versions,
             plugins::list_installed_plugins,
             plugins::set_plugins_enabled,
             plugins::uninstall_plugin,
-            plugins::start_install_plugin_task,
-            plugins::start_install_plugin_file_task,
-            modpack::export_modpack,
-            modpack::read_modpack_manifest,
-            modpack::start_import_modpack_task,
-            terminal::start_terminal_session,
-            terminal::write_terminal_input,
-            terminal::resize_terminal_session,
-            terminal::close_terminal_session,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
@@ -248,7 +212,6 @@ pub fn run() {
             tauri::RunEvent::Exit => {
                 let state = app_handle.state::<AppState>();
                 process::kill_all(&state);
-                terminal::kill_all(&state);
             }
             _ => {}
         });

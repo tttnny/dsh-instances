@@ -1,18 +1,18 @@
 <script setup lang="ts">
-import { computed, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Message } from '@arco-design/web-vue'
 import { api } from '@/api'
 import { useLauncherStore } from '@/stores/launcher'
 import type { RemoteVersion } from '@/api/types'
+import NewInstanceDialog from '@/components/NewInstanceDialog.vue'
 
-const router = useRouter()
 const { t } = useI18n()
 const store = useLauncherStore()
 
-const remote = computed(() => store.remoteVersions)
 const loading = computed(() => store.remoteLoading)
+const dialogVisible = ref(false)
+const dialogVersion = ref<string | null>(null)
 
 onMounted(() => {
   store.refreshRemoteVersions()
@@ -21,7 +21,7 @@ onMounted(() => {
 const collator = new Intl.Collator('en', { numeric: true })
 
 const sortedDesc = computed(() =>
-  [...remote.value].sort((a, b) => collator.compare(b.version, a.version)),
+  [...store.remoteVersions].sort((a, b) => collator.compare(b.version, a.version)),
 )
 
 const isPrerelease = (v: string) => v.includes('-')
@@ -31,8 +31,8 @@ const prerelease = computed(() => sortedDesc.value.filter((v) => isPrerelease(v.
 
 const latest = computed(() => {
   const rows: { v: RemoteVersion; label: string }[] = []
-  if (stable.value[0]) rows.push({ v: stable.value[0], label: t('download.latestStable') })
-  if (prerelease.value[0]) rows.push({ v: prerelease.value[0], label: t('download.latestPrerelease') })
+  if (stable.value[0]) rows.push({ v: stable.value[0], label: t('versions.latestStable') })
+  if (prerelease.value[0]) rows.push({ v: prerelease.value[0], label: t('versions.latestPrerelease') })
   return rows
 })
 
@@ -45,11 +45,10 @@ function formatDate(iso: string | null): string {
   return d.toLocaleString()
 }
 
-function pick(version: string) {
-  router.push({ name: 'download-name', params: { version } })
+function openNew(version: string | null) {
+  dialogVersion.value = version
+  dialogVisible.value = true
 }
-
-// --- Installed versions management -----------------------------------------
 
 function usedByCount(versionId: string) {
   return store.instances.filter((i) => i.version_id === versionId).length
@@ -59,7 +58,7 @@ async function onRemove(id: string, version: string) {
   try {
     await api.removeVersion(id)
     await store.refreshVersions()
-    Message.success(t('download.versionDeleted', { version }))
+    Message.success(t('versions.versionDeleted', { version }))
   } catch (e) {
     Message.error(String(e))
   }
@@ -67,57 +66,60 @@ async function onRemove(id: string, version: string) {
 </script>
 
 <template>
-  <div class="create-pick" v-loading="loading">
-    <!-- Latest versions (always rendered; empty state when no data) -->
+  <div class="versions-page" v-loading="loading">
     <div class="dl-card">
       <div class="dl-card-title">
-        <h3>{{ t('download.latest') }}</h3>
-        <a-button size="small" type="text" :loading="loading" @click="store.refreshRemoteVersions()">
-          {{ t('common.refresh') }}
-        </a-button>
+        <h3>{{ t('versions.latest') }}</h3>
+        <div class="dl-toolbar">
+          <a-button size="small" type="text" :loading="loading" @click="store.refreshRemoteVersions()">
+            {{ t('common.refresh') }}
+          </a-button>
+          <a-button type="primary" size="small" @click="openNew(null)">
+            {{ t('versions.newInstance') }}
+          </a-button>
+        </div>
       </div>
       <template v-if="latest.length">
         <div
           v-for="row in latest"
           :key="row.v.version"
           class="version-row"
-          @click="pick(row.v.version)"
+          @click="openNew(row.v.version)"
         >
           <span class="version-icon" :class="{ pre: isPrerelease(row.v.version) }">◆</span>
           <div class="version-meta">
             <div class="version-name">
               {{ row.v.version }}
               <a-tag v-if="row.v.source === 'github'" size="small" color="orange">
-                {{ t('download.sourceBuildTag') }}
+                {{ t('versions.sourceBuildTag') }}
               </a-tag>
               <a-tag v-if="installedSet.has(row.v.version)" size="small" color="green">
-                {{ t('download.installedTag') }}
+                {{ t('versions.installedTag') }}
               </a-tag>
             </div>
             <div class="version-sub">
-              {{ row.label }}<template v-if="row.v.released_at">，{{ t('download.releasedAt', { date: formatDate(row.v.released_at) }) }}</template>
+              {{ row.label }}<template v-if="row.v.released_at">，{{ t('versions.releasedAt', { date: formatDate(row.v.released_at) }) }}</template>
             </div>
           </div>
           <span class="version-arrow">›</span>
         </div>
       </template>
-      <div v-else class="card-empty">{{ loading ? t('common.loading') : t('download.noData') }}</div>
+      <div v-else class="card-empty">{{ loading ? t('common.loading') : t('versions.noData') }}</div>
     </div>
 
-    <!-- Grouped version lists -->
     <a-collapse :default-active-key="['stable', 'prerelease']" class="version-groups">
-      <a-collapse-item key="stable" :header="t('download.stable')">
+      <a-collapse-item key="stable" :header="t('versions.stable')">
         <template v-if="stable.length">
-          <div v-for="v in stable" :key="v.version" class="version-row" @click="pick(v.version)">
+          <div v-for="v in stable" :key="v.version" class="version-row" @click="openNew(v.version)">
             <span class="version-icon">◆</span>
             <div class="version-meta">
               <div class="version-name">
                 {{ v.version }}
                 <a-tag v-if="v.source === 'github'" size="small" color="orange">
-                  {{ t('download.sourceBuildTag') }}
+                  {{ t('versions.sourceBuildTag') }}
                 </a-tag>
                 <a-tag v-if="installedSet.has(v.version)" size="small" color="green">
-                  {{ t('download.installedTag') }}
+                  {{ t('versions.installedTag') }}
                 </a-tag>
               </div>
               <div class="version-sub">{{ formatDate(v.released_at) }}</div>
@@ -125,20 +127,20 @@ async function onRemove(id: string, version: string) {
             <span class="version-arrow">›</span>
           </div>
         </template>
-        <div v-else class="card-empty">{{ t('download.noData') }}</div>
+        <div v-else class="card-empty">{{ t('versions.noData') }}</div>
       </a-collapse-item>
-      <a-collapse-item key="prerelease" :header="t('download.prerelease')">
+      <a-collapse-item key="prerelease" :header="t('versions.prerelease')">
         <template v-if="prerelease.length">
-          <div v-for="v in prerelease" :key="v.version" class="version-row" @click="pick(v.version)">
+          <div v-for="v in prerelease" :key="v.version" class="version-row" @click="openNew(v.version)">
             <span class="version-icon pre">◆</span>
             <div class="version-meta">
               <div class="version-name">
                 {{ v.version }}
                 <a-tag v-if="v.source === 'github'" size="small" color="orange">
-                  {{ t('download.sourceBuildTag') }}
+                  {{ t('versions.sourceBuildTag') }}
                 </a-tag>
                 <a-tag v-if="installedSet.has(v.version)" size="small" color="green">
-                  {{ t('download.installedTag') }}
+                  {{ t('versions.installedTag') }}
                 </a-tag>
               </div>
               <div class="version-sub">{{ formatDate(v.released_at) }}</div>
@@ -146,14 +148,13 @@ async function onRemove(id: string, version: string) {
             <span class="version-arrow">›</span>
           </div>
         </template>
-        <div v-else class="card-empty">{{ t('download.noData') }}</div>
+        <div v-else class="card-empty">{{ t('versions.noData') }}</div>
       </a-collapse-item>
     </a-collapse>
 
-    <!-- Installed versions -->
     <div class="dl-card installed-card">
       <div class="dl-card-title">
-        <h3>{{ t('download.installedTitle') }}</h3>
+        <h3>{{ t('versions.installedTitle') }}</h3>
       </div>
       <div v-for="v in store.versions" :key="v.id" class="installed-row">
         <span class="version-icon">◆</span>
@@ -161,21 +162,23 @@ async function onRemove(id: string, version: string) {
           <div class="version-name">{{ v.version }}</div>
           <div class="version-sub">{{ v.dir }}</div>
         </div>
-        <span class="used-by">{{ t('download.usedBy', { count: usedByCount(v.id) }) }}</span>
+        <span class="used-by">{{ t('versions.usedBy', { count: usedByCount(v.id) }) }}</span>
         <a-popconfirm
-          :content="t('download.confirmDeleteVersion', { version: v.version })"
+          :content="t('versions.confirmDeleteVersion', { version: v.version })"
           @ok="onRemove(v.id, v.version)"
         >
-          <a-button size="small" status="danger">{{ t('download.deleteVersion') }}</a-button>
+          <a-button size="small" status="danger">{{ t('versions.deleteVersion') }}</a-button>
         </a-popconfirm>
       </div>
-      <a-empty v-if="store.versions.length === 0" :description="t('download.emptyInstalled')" />
+      <a-empty v-if="store.versions.length === 0" :description="t('versions.emptyInstalled')" />
     </div>
+
+    <NewInstanceDialog v-model:visible="dialogVisible" :preset-version="dialogVersion" />
   </div>
 </template>
 
 <style lang="scss" scoped>
-.create-pick {
+.versions-page {
   max-width: 860px;
   margin: 0 auto;
   display: flex;

@@ -67,12 +67,6 @@ fn ensure_decodable(bytes: &[u8]) -> Result<(), String> {
         .map_err(|e| format!("不是有效的图像文件: {e}"))
 }
 
-/// Downloads a remote icon and returns it as a cropped square PNG.
-pub(crate) async fn fetch_square_icon_png(url: &str) -> Result<Vec<u8>, String> {
-    let bytes = fetch_icon(url).await?;
-    crop_square_png(&bytes)
-}
-
 fn instance_home(state: &AppState, instance_id: &str) -> Result<PathBuf, String> {
     let cfg = state.config.lock().unwrap();
     let inst = cfg
