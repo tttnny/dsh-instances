@@ -266,6 +266,7 @@ const canStart = computed(
     !!selectedProfile.value &&
     !starting.value &&
     !running.value &&
+    !restarting.value &&
     !!store.versionById(selectedInstance.value.version_id),
 )
 
@@ -277,7 +278,7 @@ const launchSubtitle = computed(() => {
 })
 
 async function onStart() {
-  if (!selectedInstanceId.value || !selectedProfile.value) return
+  if (!selectedInstanceId.value || !selectedProfile.value || restarting.value) return
   try {
     await api.startInstance(selectedInstanceId.value, selectedProfile.value)
     Message.success(t('home.started'))
@@ -304,7 +305,7 @@ async function reportHealth(instanceId: string, profile: string) {
 }
 
 async function onStop() {
-  if (!selectedInstanceId.value) return
+  if (!selectedInstanceId.value || restarting.value) return
   try {
     await api.stopInstance(selectedInstanceId.value)
     Message.success(t('home.stopped'))
@@ -317,17 +318,34 @@ const restarting = ref(false)
 
 // Restart with the currently selected profile (falling back to the running one).
 async function onRestart() {
-  if (!selectedInstanceId.value || restarting.value) return
+  // Snapshot the id up front: the instance selector stays enabled during the
+  // two awaits, so re-reading selectedInstanceId could stop A and start B.
+  const id = selectedInstanceId.value
+  if (!id || restarting.value) return
   const profile = selectedProfile.value ?? selectedStatus.value?.profile ?? undefined
-  if (!profile) return
+  if (!profile) {
+    Message.warning(t('home.noProfile'))
+    return
+  }
   restarting.value = true
   try {
-    await api.stopInstance(selectedInstanceId.value)
-    await api.startInstance(selectedInstanceId.value, profile)
+    try {
+      await api.stopInstance(id)
+    } catch (e) {
+      Message.error(String(e))
+      return
+    }
+    try {
+      await api.startInstance(id, profile)
+    } catch (e) {
+      // Stopped but not started: report the state first so the user knows
+      // a manual start is the way back, then the underlying reason.
+      Message.warning(t('home.stopped'))
+      Message.error(String(e))
+      return
+    }
     Message.success(t('home.started'))
-    void reportHealth(selectedInstanceId.value, profile)
-  } catch (e) {
-    Message.error(String(e))
+    void reportHealth(id, profile)
   } finally {
     restarting.value = false
   }
@@ -419,7 +437,7 @@ function goEditSelected() {
       </div>
 
       <div class="action-block">
-        <template v-if="!running">
+        <template v-if="!running && !restarting">
           <a-button
             type="primary"
             size="large"
@@ -433,7 +451,7 @@ function goEditSelected() {
             <span v-if="launchSubtitle && !starting" class="launch-sub">{{ launchSubtitle }}</span>
           </a-button>
         </template>
-        <template v-else>
+        <template v-else-if="running">
           <a-button type="primary" size="large" long class="launch-button" @click="onOpenBrowser">
             <span class="launch-text">{{ t('home.openWindow') }}</span>
             <span class="launch-sub">{{ launchSubtitle }}</span>
@@ -442,10 +460,18 @@ function goEditSelected() {
             <a-button status="danger" class="stop-half" :disabled="restarting" @click="onStop">
               {{ t('home.stop') }}
             </a-button>
-            <a-button class="stop-half" :loading="restarting" @click="onRestart">
+            <a-button class="stop-half" :loading="restarting" :disabled="restarting" @click="onRestart">
               {{ t('home.restart') }}
             </a-button>
           </div>
+        </template>
+        <template v-else>
+          <!-- Restart in flight: stop already landed, start not yet done.
+               Hold a disabled loading slot so progress stays visible instead
+               of flipping back to the start button mid-flight. -->
+          <a-button type="primary" size="large" long disabled :loading="true" class="launch-button">
+            <span class="launch-text">{{ t('home.restart') }}</span>
+          </a-button>
         </template>
         <div class="mini-actions">
           <a-button class="mini-button" @click="router.push({ name: 'instances' })">
