@@ -918,7 +918,7 @@ pub fn open_instance_terminal(
     state: State<'_, AppState>,
     instance_id: String,
 ) -> Result<String, String> {
-    let (cfg_home, cfg_inst) = {
+    let (cfg_home, cfg_inst, cfg_ver) = {
         let cfg = state.config.lock().unwrap();
         let inst = cfg
             .instances
@@ -932,17 +932,65 @@ pub fn open_instance_terminal(
             .find(|h| h.id == inst.home_id)
             .cloned()
             .ok_or_else(|| "DSH_HOME 不存在".to_string())?;
-        (home, inst)
+        let ver = cfg
+            .versions
+            .iter()
+            .find(|v| v.id == inst.version_id)
+            .cloned();
+        (home, inst, ver)
     };
     let terminal = state.config.lock().unwrap().settings.terminal.clone();
     std::fs::create_dir_all(&cfg_home.path).map_err(|e| format!("创建 HOME 目录失败: {e}"))?;
     let home_str = cfg_home.path.to_string_lossy().to_string();
+
     let mut env_pairs: Vec<(String, String)> = vec![
         ("DSH_HOME".to_string(), home_str.clone()),
         ("DSH_LAUNCHER_INSTANCE".to_string(), cfg_inst.name.clone()),
     ];
+
+    // Prepend the instance's DSH version bin directory to PATH so `dsh` is immediately available.
+    let mut path_dirs: Vec<std::path::PathBuf> = Vec::new();
+    if let Some(ref ver) = cfg_ver {
+        let ver_dir = std::path::PathBuf::from(&ver.dir);
+        let bin_dir = ver_dir.join("node_modules").join(".bin");
+        let dsh_bin = bin_dir.join("dsh");
+        if !dsh_bin.exists() {
+            let target_bin = crate::process::version_bin(&ver_dir);
+            if target_bin.exists() {
+                let _ = std::fs::create_dir_all(&bin_dir);
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    let content = format!("#!/bin/sh\nexec node \"{}\" \"$@\"\n", target_bin.to_string_lossy());
+                    if std::fs::write(&dsh_bin, content).is_ok() {
+                        let _ = std::fs::set_permissions(&dsh_bin, std::fs::Permissions::from_mode(0o755));
+                    }
+                }
+            }
+        }
+        if bin_dir.exists() {
+            path_dirs.push(bin_dir);
+        }
+    }
+
+    let managed_node_bin = state.data_dir.join("tools").join("node").join("bin");
+    if managed_node_bin.exists() {
+        path_dirs.push(managed_node_bin);
+    }
+
+    let path_prefix = if !path_dirs.is_empty() {
+        let joined = path_dirs
+            .iter()
+            .map(|p| p.to_string_lossy().to_string())
+            .collect::<Vec<_>>()
+            .join(":");
+        format!("export PATH=\"{}:$PATH\"; ", joined)
+    } else {
+        String::new()
+    };
+
     for (k, v) in &cfg_inst.env_overrides {
-        if k != "DSH_HOME" {
+        if k != "DSH_HOME" && k != "PATH" {
             env_pairs.push((k.clone(), v.clone()));
         }
     }
@@ -951,8 +999,9 @@ pub fn open_instance_terminal(
         .map(|(k, v)| format!("export {}={}", k, shell_quote(v)))
         .collect::<Vec<_>>()
         .join("; ");
-    let init_cmd = format!("{exports}; cd {}; clear", shell_quote(&home_str));
+    let init_cmd = format!("{path_prefix}{exports}; cd {}; clear", shell_quote(&home_str));
     let label = format!("DSH {} ({})", cfg_inst.name, home_str);
+
     if terminal == "ghostty" {
         // Ghostty: new window running login shell with the env preloaded.
         let status = std::process::Command::new("open")
@@ -967,13 +1016,23 @@ pub fn open_instance_terminal(
             .arg(&init_cmd)
             .spawn()
             .and_then(|mut c| c.wait());
+
+        // Bring Ghostty to front
+        let _ = std::process::Command::new("osascript")
+            .arg("-e")
+            .arg("tell application \"Ghostty\" to activate")
+            .output();
+
         match status {
             Ok(_) => Ok(label),
             Err(e) => Err(format!("打开 Ghostty 失败: {e}")),
         }
     } else {
-        // Terminal.app: do script opens a new window running the init command.
-        let script = format!("tell application \"Terminal\" to do script \"{init_cmd}\"");
+        // Terminal.app: activate brings Terminal to the foreground, do script runs the command.
+        let escaped_cmd = init_cmd.replace('\\', "\\\\").replace('"', "\\\"");
+        let script = format!(
+            "tell application \"Terminal\"\n    activate\n    do script \"{escaped_cmd}\"\nend tell"
+        );
         let out = std::process::Command::new("osascript")
             .arg("-e")
             .arg(&script)
