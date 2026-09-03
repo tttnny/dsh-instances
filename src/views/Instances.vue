@@ -15,15 +15,15 @@ const store = useLauncherStore()
 const newVisible = ref(false)
 
 const columns = computed(() => [
-  { title: t('instances.table.name'), slotName: 'name', width: 190 },
-  { title: t('instances.table.version'), slotName: 'version', width: 130 },
-  { title: t('instances.table.home'), slotName: 'home', width: 150 },
-  { title: t('instances.table.profile'), slotName: 'profile', width: 90 },
-  { title: t('instances.table.status'), slotName: 'status', width: 130 },
+  { title: t('instances.table.name'), slotName: 'name', width: 170 },
+  { title: t('instances.table.version'), slotName: 'version', width: 120 },
+  { title: t('instances.table.home'), slotName: 'home', width: 190 },
+  { title: t('instances.table.profile'), slotName: 'profile', width: 110 },
+  { title: t('instances.table.status'), slotName: 'status', width: 110 },
   {
     title: t('instances.table.actions'),
     slotName: 'actions',
-    width: 170,
+    width: 200,
     align: 'right' as const,
   },
 ])
@@ -361,6 +361,8 @@ async function onOpenBrowser(id: string) {
   border-radius: 6px;
   background: var(--apple-group-bg);
   color: var(--color-text-2);
+  white-space: nowrap;
+  display: inline-block;
 }
 
 .status-cell {
@@ -409,6 +411,8 @@ async function onOpenBrowser(id: string) {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .mac-action-pill {

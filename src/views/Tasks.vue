@@ -106,7 +106,7 @@ const sortedTasks = computed(() => store.taskList)
           <div class="task-info">
             <div class="task-label">
               <span class="label-text">{{ task.label }}</span>
-              <span :class="['apple-status-dot', task.state === 'running' ? 'starting' : task.state === 'done' ? 'running' : task.state === 'error' ? 'error' : 'idle']">
+              <span :class="['apple-status-dot', task.state === 'running' ? 'running' : task.state === 'done' ? 'done' : task.state === 'error' ? 'error' : 'idle']">
                 {{ t(`tasks.state.${task.state}`) }}
               </span>
             </div>

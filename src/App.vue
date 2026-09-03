@@ -316,9 +316,16 @@ async function onHeaderMouseDown(e: MouseEvent) {
 <template>
   <div class="apple-window">
     <!-- Unified Sidebar: spans full vertical height -->
-    <aside class="apple-sider" :class="{ collapsed: siderCollapsed }">
-      <!-- Traffic Light Area in Sidebar Header -->
-      <div class="sider-traffic-header" @mousedown="onHeaderMouseDown">
+    <aside class="apple-sider" :class="{ collapsed: siderCollapsed, 'is-tauri': isTauri }">
+      <!-- Traffic light safe spacer in collapsed Tauri mode -->
+      <div v-if="isTauri && siderCollapsed" class="sider-traffic-spacer" @mousedown="onHeaderMouseDown" />
+
+      <!-- Traffic Light Area / Brand in Sidebar Header -->
+      <div
+        class="sider-traffic-header"
+        :class="{ 'with-traffic-inset': isTauri && !siderCollapsed }"
+        @mousedown="onHeaderMouseDown"
+      >
         <div v-if="!siderCollapsed" class="sider-brand">
           <div class="sider-app-dot" />
           <span class="sider-title">{{ t('app.title') }}</span>
@@ -533,14 +540,25 @@ async function onHeaderMouseDown(e: MouseEvent) {
 }
 
 // Window Traffic Area & Brand in Sidebar
+.sider-traffic-spacer {
+  height: 36px;
+  width: 100%;
+  flex-shrink: 0;
+  -webkit-app-region: drag;
+}
+
 .sider-traffic-header {
   height: var(--dl-header-height);
-  padding: 0 14px 0 18px;
+  padding: 0 14px 0 16px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   -webkit-app-region: drag;
   user-select: none;
+
+  &.with-traffic-inset {
+    padding-left: 78px;
+  }
 }
 
 .sider-brand {

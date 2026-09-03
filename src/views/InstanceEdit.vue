@@ -221,6 +221,35 @@ function removeEnvRow(idx: number) {
   envRows.value.splice(idx, 1)
 }
 
+const dirBusy = ref(false)
+const logBusy = ref(false)
+
+async function onOpenDirectory() {
+  if (!editingId.value) return
+  dirBusy.value = true
+  try {
+    const path = await api.openInstanceDirectory(editingId.value)
+    Message.success(t('instanceEdit.dirOpened', { path }))
+  } catch (e) {
+    Message.error(String(e))
+  } finally {
+    dirBusy.value = false
+  }
+}
+
+async function onViewLog() {
+  if (!editingId.value) return
+  logBusy.value = true
+  try {
+    const path = await api.openInstanceLog(editingId.value)
+    Message.success(t('instanceEdit.logOpened', { path }))
+  } catch (e) {
+    Message.error(String(e))
+  } finally {
+    logBusy.value = false
+  }
+}
+
 const homeLabel = computed(() => {
   if (!homeId.value) return '—'
   if (homeId.value === DEDICATED) return t('instanceEdit.dedicatedHome')
@@ -245,7 +274,35 @@ const homeLabel = computed(() => {
             <template v-if="defaultProfile"> · {{ defaultProfile }}</template>
           </div>
         </div>
-        <span v-if="editingId" class="overview-id-chip tnum">{{ editingId.slice(0, 8) }}</span>
+        <div class="overview-right-actions">
+          <button
+            v-if="editingId"
+            type="button"
+            class="mac-secondary-btn"
+            :disabled="dirBusy"
+            @click="onOpenDirectory"
+          >
+            <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
+              <path d="M2 4a1.5 1.5 0 0 1 1.5-1.5h3l2 2H13a1.5 1.5 0 0 1 1.5 1.5v6a1.5 1.5 0 0 1-1.5 1.5H3.5A1.5 1.5 0 0 1 2 12V4z" />
+            </svg>
+            <span>{{ t('instanceEdit.openDir') }}</span>
+          </button>
+          <button
+            v-if="editingId"
+            type="button"
+            class="mac-secondary-btn"
+            :disabled="logBusy"
+            @click="onViewLog"
+          >
+            <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
+              <rect x="3" y="2" width="10" height="12" rx="1.5" />
+              <line x1="6" y1="6" x2="10" y2="6" />
+              <line x1="6" y1="9" x2="10" y2="9" />
+            </svg>
+            <span>{{ t('instanceEdit.viewLog') }}</span>
+          </button>
+          <span v-if="editingId" class="overview-id-chip tnum">{{ editingId.slice(0, 8) }}</span>
+        </div>
       </div>
 
       <!-- Form Body -->
@@ -269,6 +326,7 @@ const homeLabel = computed(() => {
                   style="max-width: 300px"
                 />
                 <button
+                  type="button"
                   class="mac-secondary-btn"
                   :disabled="!iconInput.trim() || iconBusy"
                   @click="applyIconInput"
@@ -277,10 +335,10 @@ const homeLabel = computed(() => {
                 </button>
               </div>
               <div class="icon-actions-row">
-                <button class="mac-secondary-btn" :disabled="iconBusy" @click="pickIconFile">
+                <button type="button" class="mac-secondary-btn" :disabled="iconBusy" @click="pickIconFile">
                   {{ t('instanceEdit.iconPickFile') }}
                 </button>
-                <button v-if="iconUrl" class="mac-action-pill danger" @click="clearIcon">
+                <button v-if="iconUrl" type="button" class="mac-action-pill danger" @click="clearIcon">
                   {{ t('instanceEdit.iconClear') }}
                 </button>
               </div>
@@ -330,7 +388,7 @@ const homeLabel = computed(() => {
               style="width: 180px"
               @press-enter="applyPort"
             />
-            <button class="mac-secondary-btn" :disabled="portBusy" @click="applyPort">
+            <button type="button" class="mac-secondary-btn" :disabled="portBusy" @click="applyPort">
               {{ t('instanceEdit.portApply') }}
             </button>
           </div>
@@ -344,19 +402,19 @@ const homeLabel = computed(() => {
                 v-model="row.key"
                 :placeholder="t('instanceEdit.envKey')"
                 class="apple-input-sm env-k"
-                :class="{ 'has-error': !!envKeyError(row) }"
+                :class="{ 'has-error': !!envKeyError(row) } "
               />
               <input
                 v-model="row.value"
                 :placeholder="t('instanceEdit.envValue')"
                 class="apple-input-sm env-v"
               />
-              <button class="mac-micro-btn danger" @click="removeEnvRow(idx)">
+              <button type="button" class="mac-micro-btn danger" @click="removeEnvRow(idx)">
                 {{ t('instances.table.delete') }}
               </button>
               <div v-if="envKeyError(row)" class="env-error-chip">{{ envKeyError(row) }}</div>
             </div>
-            <button class="mac-secondary-btn add-env-btn" @click="addEnvRow">
+            <button type="button" class="mac-secondary-btn add-env-btn" @click="addEnvRow">
               + {{ t('instanceEdit.envAdd') }}
             </button>
           </div>
@@ -365,10 +423,11 @@ const homeLabel = computed(() => {
 
       <!-- Footer Buttons -->
       <div class="edit-footer-bar">
-        <button class="mac-secondary-btn" @click="router.push({ name: 'instances' })">
+        <button type="button" class="mac-secondary-btn" @click="router.push({ name: 'instances' })">
           {{ t('instanceEdit.cancel') }}
         </button>
         <button
+          type="button"
           class="mac-primary-btn"
           :disabled="!formValid || saving"
           @click="onSave"
@@ -431,6 +490,12 @@ const homeLabel = computed(() => {
     color: var(--color-text-3);
     margin-top: 2px;
   }
+}
+
+.overview-right-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .overview-id-chip {

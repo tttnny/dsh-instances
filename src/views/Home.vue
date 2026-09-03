@@ -328,7 +328,7 @@ function goManage() {
     </div>
 
     <div v-else-if="filteredInstances.length === 0" class="dl-card home-empty">
-      <div class="empty-desc">{{ t('common.loading') }}</div>
+      <div class="empty-desc">{{ t('home.noMatchingInstances') }}</div>
     </div>
 
     <!-- Instance Card Wall -->
@@ -417,7 +417,14 @@ function goManage() {
 
         <!-- Primary Action Buttons -->
         <div class="card-main-actions">
-          <template v-if="statusOf(inst.id).state === 'running'">
+          <template v-if="restarting[inst.id]">
+            <button class="action-btn secondary-action is-busy" disabled>
+              <span class="mini-spinner" />
+              <span>{{ t('home.restart') }}</span>
+            </button>
+          </template>
+
+          <template v-else-if="statusOf(inst.id).state === 'running'">
             <button class="action-btn primary-action active-open" @click="onOpenBrowser(inst)">
               <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
                 <polygon points="5 3 13 8 5 13 5 3" />
@@ -830,7 +837,7 @@ function goManage() {
 
     &:hover {
       color: var(--color-text-1);
-      background: rgba(0, 0, 0, 0.05);
+      background: var(--apple-group-bg);
     }
   }
 }
@@ -882,7 +889,7 @@ function goManage() {
       border: 1px solid var(--apple-card-border);
 
       &:hover:not(:disabled) {
-        background: rgba(0, 0, 0, 0.08);
+        filter: brightness(0.96);
       }
     }
 
