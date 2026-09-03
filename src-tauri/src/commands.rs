@@ -1032,7 +1032,7 @@ pub fn open_instance_terminal(
             .arg("Ghostty")
             .arg("--args")
             .arg(format!("--title={label}"))
-            .arg(format!("--command={}", term_script.to_string_lossy()))
+            .arg(format!("--command={}", shell_quote(&term_script.to_string_lossy())))
             .spawn()
             .and_then(|mut c| c.wait());
 
