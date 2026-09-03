@@ -313,6 +313,26 @@ async function onStop() {
   }
 }
 
+const restarting = ref(false)
+
+// Restart with the currently selected profile (falling back to the running one).
+async function onRestart() {
+  if (!selectedInstanceId.value || restarting.value) return
+  const profile = selectedProfile.value ?? selectedStatus.value?.profile ?? undefined
+  if (!profile) return
+  restarting.value = true
+  try {
+    await api.stopInstance(selectedInstanceId.value)
+    await api.startInstance(selectedInstanceId.value, profile)
+    Message.success(t('home.started'))
+    void reportHealth(selectedInstanceId.value, profile)
+  } catch (e) {
+    Message.error(String(e))
+  } finally {
+    restarting.value = false
+  }
+}
+
 // Opens the running instance URL in the system browser (new tab in preview).
 async function onOpenBrowser() {
   if (!selectedInstanceId.value) return
@@ -418,9 +438,14 @@ function goEditSelected() {
             <span class="launch-text">{{ t('home.openWindow') }}</span>
             <span class="launch-sub">{{ launchSubtitle }}</span>
           </a-button>
-          <a-button status="danger" long class="stop-button" @click="onStop">
-            {{ t('home.stop') }}
-          </a-button>
+          <div class="stop-row">
+            <a-button status="danger" class="stop-half" :disabled="restarting" @click="onStop">
+              {{ t('home.stop') }}
+            </a-button>
+            <a-button class="stop-half" :loading="restarting" @click="onRestart">
+              {{ t('home.restart') }}
+            </a-button>
+          </div>
         </template>
         <div class="mini-actions">
           <a-button class="mini-button" @click="router.push({ name: 'instances' })">
@@ -565,8 +590,14 @@ function goEditSelected() {
   }
 }
 
-.stop-button {
-  height: 40px;
+.stop-row {
+  display: flex;
+  gap: 10px;
+
+  .stop-half {
+    flex: 1;
+    height: 40px;
+  }
 }
 
 .mini-actions {

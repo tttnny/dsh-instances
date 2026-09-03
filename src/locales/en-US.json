@@ -17,6 +17,7 @@
     "starting": "Starting…",
     "openWindow": "Open in browser",
     "stop": "Stop",
+    "restart": "Restart",
     "editSelected": "Instance settings",
     "instanceList": "Instance list",
     "sharedHome": "Shared DSH_HOME",

@@ -17,6 +17,7 @@
     "starting": "启动中…",
     "openWindow": "在浏览器中打开",
     "stop": "停止",
+    "restart": "重启",
     "editSelected": "实例设置",
     "instanceList": "实例列表",
     "sharedHome": "共享 DSH_HOME",
