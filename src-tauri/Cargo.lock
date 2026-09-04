@@ -967,6 +967,7 @@ dependencies = [
  "chrono",
  "flate2",
  "image",
+ "objc2",
  "open",
  "portable-pty",
  "regex",

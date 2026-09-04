@@ -42,6 +42,8 @@ fn create_main_window(app: &AppHandle) -> Result<(), String> {
         .build()
         .map_err(|e| e.to_string())?;
     attach_close_behavior(app, &win);
+    // Recreated windows need their native traffic lights hidden as well.
+    crate::traffic::attach(&win);
     Ok(())
 }
 

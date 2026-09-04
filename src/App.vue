@@ -48,6 +48,8 @@ onMounted(async () => {
   }
   await setupLaunchDeepLink()
   window.addEventListener('keydown', onAppKeydown)
+  window.addEventListener('focus', onWinFocus)
+  window.addEventListener('blur', onWinBlur)
   await setupMenuListeners()
 })
 
@@ -190,6 +192,8 @@ async function openBrowserWhenReady(id: string) {
 onUnmounted(() => {
   themeMedia.removeEventListener('change', onSystemThemeChange)
   window.removeEventListener('keydown', onAppKeydown)
+  window.removeEventListener('focus', onWinFocus)
+  window.removeEventListener('blur', onWinBlur)
   unlistenDeepLink?.()
   unlistenMenu.forEach((un) => un())
   unlistenMenu = []
@@ -316,12 +320,79 @@ async function loadWindowApi() {
   return getCurrentWindow()
 }
 
-async function onHeaderMouseDown(e: MouseEvent) {
+// --- Title bar drag & double-click zoom ---------------------------------------
+// startDragging() enters a native drag loop that swallows the pending click,
+// so only start dragging once the pointer moves past a small threshold — fast
+// clicks then complete normally and dblclick (zoom) still reaches the webview.
+
+let dragArmed: { x: number; y: number; started: boolean } | null = null
+
+function onHeaderMouseDown(e: MouseEvent) {
   if (!isTauri || e.button !== 0) return
   const el = e.target as HTMLElement | null
   if (el?.closest('.nav-item, a, button, input, [data-no-drag]')) return
+  dragArmed = { x: e.screenX, y: e.screenY, started: false }
+  window.addEventListener('mousemove', onDragThresholdMove)
+  window.addEventListener('mouseup', onDragFinish, { once: true })
+}
+
+function onDragThresholdMove(e: MouseEvent) {
+  if (!dragArmed || dragArmed.started) return
+  const dx = e.screenX - dragArmed.x
+  const dy = e.screenY - dragArmed.y
+  if (dx * dx + dy * dy > 25) {
+    dragArmed.started = true
+    void Promise.resolve(appWindow).then((w) => w?.startDragging())
+  }
+}
+
+function onDragFinish() {
+  dragArmed = null
+  window.removeEventListener('mousemove', onDragThresholdMove)
+}
+
+/** macOS native title bar behavior: double-click empty strip zooms the window. */
+async function onHeaderDoubleClick(e: MouseEvent) {
+  if (!isTauri || e.button !== 0) return
+  const el = e.target as HTMLElement | null
+  if (el?.closest('.nav-item, a, button, input, [data-no-drag]')) return
+  await toggleWindowZoom()
+}
+
+// --- Custom traffic lights (the native buttons are hidden by the Rust side) ---
+
+async function toggleWindowZoom() {
+  try {
+    const w = await appWindow
+    if (!w) return
+    if (await w.isMaximized()) {
+      await w.unmaximize()
+    } else {
+      await w.maximize()
+    }
+  } catch {
+    // Advisory only
+  }
+}
+
+async function onLightClose() {
   const w = await appWindow
-  w?.startDragging()
+  void w?.close()
+}
+
+async function onLightMinimize() {
+  const w = await appWindow
+  void w?.minimize()
+}
+
+const winFocused = ref(true)
+
+function onWinFocus() {
+  winFocused.value = true
+}
+
+function onWinBlur() {
+  winFocused.value = false
 }
 </script>
 
@@ -329,18 +400,30 @@ async function onHeaderMouseDown(e: MouseEvent) {
   <div class="apple-window">
     <!-- Unified Sidebar: spans full vertical height -->
     <aside class="apple-sider" :class="{ collapsed: siderCollapsed, 'is-tauri': isTauri }">
-      <!-- Traffic light safe spacer in collapsed Tauri mode -->
-      <div v-if="isTauri && siderCollapsed" class="sider-traffic-spacer" @mousedown="onHeaderMouseDown" />
-
-      <!-- Traffic Light Area / Brand in Sidebar Header -->
+      <!-- Sidebar Header: custom traffic lights + sidebar toggle, one aligned row -->
       <div
         class="sider-traffic-header"
-        :class="{ 'with-traffic-inset': isTauri && !siderCollapsed }"
         @mousedown="onHeaderMouseDown"
+        @dblclick="onHeaderDoubleClick"
       >
-        <div v-if="!siderCollapsed" class="sider-brand">
-          <div class="sider-app-dot" />
-          <span class="sider-title">{{ t('app.title') }}</span>
+        <div v-if="isTauri" class="traffic-lights">
+          <button class="tl tl-close" :class="{ blurred: !winFocused }" title="关闭" @click="onLightClose">
+            <svg viewBox="0 0 16 16" width="8" height="8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+              <line x1="4" y1="4" x2="12" y2="12" />
+              <line x1="12" y1="4" x2="4" y2="12" />
+            </svg>
+          </button>
+          <button class="tl tl-min" :class="{ blurred: !winFocused }" title="最小化" @click="onLightMinimize">
+            <svg viewBox="0 0 16 16" width="8" height="8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+              <line x1="3.5" y1="8" x2="12.5" y2="8" />
+            </svg>
+          </button>
+          <button class="tl tl-zoom" :class="{ blurred: !winFocused }" title="缩放" @click="toggleWindowZoom">
+            <svg viewBox="0 0 16 16" width="9" height="9" fill="currentColor">
+              <polygon points="3,6.5 3,3 6.5,3" />
+              <polygon points="13,9.5 13,13 9.5,13" />
+            </svg>
+          </button>
         </div>
         <button
           class="sider-toggle-btn"
@@ -348,9 +431,38 @@ async function onHeaderMouseDown(e: MouseEvent) {
           data-no-drag
           @click="toggleSider"
         >
-          <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
-            <rect x="2" y="2.5" width="12" height="11" rx="2.5" />
-            <line x1="6" y1="2.5" x2="6" y2="13.5" />
+          <!-- Expanded → arrow points left (collapse); collapsed → arrow points right (expand) -->
+          <svg
+            v-if="!siderCollapsed"
+            viewBox="0 0 16 16"
+            width="15"
+            height="15"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.5"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <rect x="1.75" y="2.75" width="12.5" height="10.5" rx="2.5" />
+            <line x1="6.25" y1="2.75" x2="6.25" y2="13.25" />
+            <polyline points="9.7 5.9 7.6 8 9.7 10.1" />
+            <line x1="7.6" y1="8" x2="12.4" y2="8" />
+          </svg>
+          <svg
+            v-else
+            viewBox="0 0 16 16"
+            width="15"
+            height="15"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.5"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <rect x="1.75" y="2.75" width="12.5" height="10.5" rx="2.5" />
+            <line x1="6.25" y1="2.75" x2="6.25" y2="13.25" />
+            <polyline points="10.3 5.9 12.4 8 10.3 10.1" />
+            <line x1="7.6" y1="8" x2="12.4" y2="8" />
           </svg>
         </button>
       </div>
@@ -500,7 +612,7 @@ async function onHeaderMouseDown(e: MouseEvent) {
     <!-- Main Window Area -->
     <main class="apple-main">
       <!-- Unified Header Toolbar -->
-      <header class="apple-header" @mousedown="onHeaderMouseDown">
+      <header class="apple-header" @mousedown="onHeaderMouseDown" @dblclick="onHeaderDoubleClick">
         <div class="header-left">
           <button v-if="showBack" class="header-mac-btn" :title="t('common.back')" data-no-drag @click="onHeaderBack">
             <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -568,11 +680,6 @@ async function onHeaderMouseDown(e: MouseEvent) {
   &.collapsed {
     width: var(--dl-sider-collapsed-width);
 
-    .sider-traffic-header {
-      justify-content: center;
-      padding: 0 8px;
-    }
-
     .nav-item {
       justify-content: center;
       padding: 9px 0;
@@ -580,53 +687,78 @@ async function onHeaderMouseDown(e: MouseEvent) {
   }
 }
 
-// Window Traffic Area & Brand in Sidebar
-.sider-traffic-spacer {
-  height: 36px;
-  width: 100%;
-  flex-shrink: 0;
-  -webkit-app-region: drag;
-}
-
+// Window Traffic Area in Sidebar
+// Content sits 4px below the box center: the native title-bar hit zone covers
+// roughly the top 22px and swallows clicks there.
 .sider-traffic-header {
   height: var(--dl-header-height);
-  padding: 0 14px 0 16px;
+  flex-shrink: 0;
+  padding: 4px 10px 0 10px;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  border-bottom: 1px solid var(--apple-separator);
   -webkit-app-region: drag;
   user-select: none;
-
-  &.with-traffic-inset {
-    padding-left: 78px;
-  }
 }
 
-.sider-brand {
+.traffic-lights {
   display: flex;
   align-items: center;
   gap: 8px;
-  min-width: 0;
-  flex: 1;
-}
-
-.sider-app-dot {
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, rgb(var(--primary-6)), #722ed1);
-  box-shadow: 0 0 8px rgb(var(--primary-6) / 40%);
+  margin-right: 12px;
   flex-shrink: 0;
 }
 
-.sider-title {
-  font-size: 13px;
-  font-weight: 600;
-  letter-spacing: -0.02em;
-  color: var(--color-text-1);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.tl {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 1px solid transparent;
+  padding: 0;
+  cursor: default;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(0, 0, 0, 0.55);
+  transition: filter 0.15s ease;
+
+  svg {
+    opacity: 0;
+    transition: opacity 0.12s ease;
+  }
+
+  &:hover svg {
+    opacity: 1;
+  }
+
+  &:active {
+    filter: brightness(0.8);
+  }
+
+  &.tl-close {
+    background: #ff5f57;
+    border-color: #de4b41;
+  }
+
+  &.tl-min {
+    background: #febc2e;
+    border-color: #d8a024;
+  }
+
+  &.tl-zoom {
+    background: #28c840;
+    border-color: #1b9e32;
+  }
+
+  // macOS dims the lights when the window loses focus and hides the glyphs.
+  &.blurred {
+    background: var(--color-text-4);
+    border-color: transparent;
+
+    &:hover svg {
+      opacity: 0;
+    }
+  }
 }
 
 .sider-toggle-btn {
@@ -640,6 +772,11 @@ async function onHeaderMouseDown(e: MouseEvent) {
   align-items: center;
   justify-content: center;
   transition: all 0.16s ease;
+
+  &:focus,
+  &:focus-visible {
+    outline: none;
+  }
 
   &:hover {
     background: var(--apple-group-bg);
@@ -772,12 +909,14 @@ async function onHeaderMouseDown(e: MouseEvent) {
 }
 
 // Unified Header
+// Same 4px top padding as the sidebar strip so title / buttons sit on the
+// traffic lights' line.
 .apple-header {
   height: var(--dl-header-height);
   flex-shrink: 0;
   display: flex;
   align-items: center;
-  padding: 0 24px;
+  padding: 4px 24px 0;
   border-bottom: 1px solid var(--apple-separator);
   background: var(--apple-content-bg);
   -webkit-app-region: drag;
@@ -791,7 +930,7 @@ async function onHeaderMouseDown(e: MouseEvent) {
 }
 
 .header-title {
-  font-size: 14px;
+  font-size: 16px;
   font-weight: 600;
   letter-spacing: -0.015em;
   color: var(--color-text-1);
@@ -817,8 +956,8 @@ async function onHeaderMouseDown(e: MouseEvent) {
 }
 
 .header-mac-btn {
-  border: 1px solid var(--apple-card-border);
-  background: var(--apple-card-bg);
+  border: none;
+  background: transparent;
   color: var(--color-text-2);
   border-radius: 7px;
   width: 28px;
@@ -827,13 +966,11 @@ async function onHeaderMouseDown(e: MouseEvent) {
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
   transition: all 0.15s ease;
 
   &:hover {
     background: var(--apple-group-bg);
     color: var(--color-text-1);
-    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.08);
   }
 
   &:active {
