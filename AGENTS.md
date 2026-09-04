@@ -40,11 +40,16 @@ pnpm test:release-notes   # 跑 ci 目录的 release-notes 测试
 # 1. 先退出运行中的自测副本
 pkill -f "dsh-launcher.app" 2>/dev/null || true
 
-# 2. 替换 App（/Applications 当前用户可写，无需 sudo）
+# 2. 给产物 ad-hoc 深签名（bundler 不做 bundle 签名，跳过这步
+#    codesign --verify 会报 "code has no resources but signature
+#    indicates they must be present"）
+codesign --force --deep --sign - "src-tauri/target/release/bundle/macos/dsh-launcher.app"
+
+# 3. 替换 App（/Applications 当前用户可写，无需 sudo）
 rm -rf /Applications/dsh-launcher.app
 ditto "src-tauri/target/release/bundle/macos/dsh-launcher.app" /Applications/dsh-launcher.app
 
-# 3. 校验签名（替换后必须通过）
+# 4. 校验签名（替换后必须通过）
 codesign --verify --deep --strict /Applications/dsh-launcher.app
 ```
 
@@ -52,3 +57,4 @@ codesign --verify --deep --strict /Applications/dsh-launcher.app
 
 - 先确认没有正在运行的实例再删除，避免删除运行中的 App 导致行为异常。
 - 替换前重新构建（`pnpm tauri build --bundles app`）保证产物是最新的。
+- ad-hoc 签名仅用于本机自测；正式发版仍走各自的签名/公证流程。
