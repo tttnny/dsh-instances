@@ -50,6 +50,16 @@
       "warnTitle": "Dependency tree notice",
       "errorTitle": "Dependency tree fault"
     },
+    "healthLogs": "Doctor Logs",
+    "healthModalTitle": "Dependency Doctor Logs",
+    "clearLogs": "Clear",
+    "copyLogs": "Copy",
+    "copiedLogs": "Doctor logs copied",
+    "noHealthLogs": "No doctor findings recorded. Environment is healthy.",
+    "filterAll": "All",
+    "filterError": "Errors",
+    "filterWarn": "Warnings",
+    "recheckHealth": "Recheck",
     "noProfile": "No profile available under this instance's DSH_HOME"
   },
   "instances": {

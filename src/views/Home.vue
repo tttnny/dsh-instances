@@ -2,12 +2,14 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { Message, Notification } from '@arco-design/web-vue'
+import { Message } from '@arco-design/web-vue'
 import { api } from '@/api'
 import { useLauncherStore } from '@/stores/launcher'
+import type { HealthLogItem } from '@/stores/launcher'
 import type { DshInstance } from '@/api/types'
 import launcherDefaultIcon from '@/assets/launcher-icon.png'
 import NewInstanceDialog from '@/components/NewInstanceDialog.vue'
+import HealthLogModal from '@/components/HealthLogModal.vue'
 
 const router = useRouter()
 const { t } = useI18n()
@@ -41,6 +43,12 @@ watch(
 
 onMounted(() => {
   ensureProfiles()
+  for (const inst of store.instances) {
+    if (store.statusOf(inst.id).state === 'running') {
+      const p = profileSel.value[inst.id] ?? inst.default_profile ?? 'web'
+      void reportHealth(inst.id, p)
+    }
+  }
 })
 
 // --- Per-card profile state ---------------------------------------------------
@@ -131,13 +139,25 @@ function canStart(inst: DshInstance): boolean {
 
 // --- Start / stop / open -----------------------------------------------------
 
+const healthLogsVisible = ref(false)
+
 async function reportHealth(instanceId: string, profile: string) {
   try {
     const report = await api.checkInstanceHealth(instanceId, profile)
-    for (const f of report.findings.slice(0, 3)) {
-      const content = `${t('home.health.prefix')}${f.message}`
-      if (f.level === 'error') Notification.error({ title: t('home.health.errorTitle'), content, duration: 0, closable: true })
-      else Notification.warning({ title: t('home.health.warnTitle'), content, duration: 8000, closable: true })
+    if (report?.findings?.length) {
+      const inst = store.instanceById(instanceId)
+      const instName = inst?.name ?? instanceId
+      const newLogs: HealthLogItem[] = report.findings.map((f, idx) => ({
+        id: `${Date.now()}-${instanceId}-${idx}-${Math.random().toString(36).slice(2, 6)}`,
+        timestamp: Date.now(),
+        instanceId,
+        instanceName: instName,
+        profile,
+        level: f.level,
+        code: f.code,
+        message: f.message,
+      }))
+      store.addHealthLogs(newLogs)
     }
   } catch {
     // Advisory only
@@ -287,6 +307,34 @@ function goManage() {
       </div>
 
       <span class="home-count tnum">{{ t('home.instanceCount', { count: filteredInstances.length }) }}</span>
+
+      <button
+        class="mac-secondary-btn health-log-btn"
+        :class="{
+          'has-error': store.healthErrorCount > 0,
+          'has-warn': store.healthErrorCount === 0 && store.healthWarnCount > 0
+        }"
+        @click="healthLogsVisible = true"
+        :title="t('home.healthLogs')"
+      >
+        <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="2" y="3" width="12" height="10" rx="2" />
+          <path d="M5 6.5l2 1.5-2 1.5" />
+          <line x1="8.5" y1="9.5" x2="11" y2="9.5" />
+        </svg>
+        <span>{{ t('home.healthLogs') }}</span>
+        <span
+          v-if="store.healthTotalCount > 0"
+          class="health-badge"
+          :class="{
+            'badge-error': store.healthErrorCount > 0,
+            'badge-warn': store.healthErrorCount === 0 && store.healthWarnCount > 0
+          }"
+        >
+          {{ store.healthTotalCount > 99 ? '99+' : store.healthTotalCount }}
+        </span>
+      </button>
+
       <span class="home-spacer" />
 
       <button class="mac-secondary-btn" @click="goManage">
@@ -502,6 +550,7 @@ function goManage() {
     </div>
 
     <NewInstanceDialog v-model:visible="newVisible" />
+    <HealthLogModal v-model:visible="healthLogsVisible" :profile-map="profileSel" />
   </div>
 </template>
 
@@ -631,6 +680,59 @@ function goManage() {
 
   &:active {
     transform: scale(var(--apple-active-scale));
+  }
+}
+
+.health-log-btn {
+  position: relative;
+
+  &.has-error {
+    border-color: rgba(239, 68, 68, 0.35);
+    background: rgba(239, 68, 68, 0.06);
+    color: #ef4444;
+
+    &:hover {
+      background: rgba(239, 68, 68, 0.12);
+      color: #dc2626;
+    }
+  }
+
+  &.has-warn {
+    border-color: rgba(245, 158, 11, 0.35);
+    background: rgba(245, 158, 11, 0.06);
+    color: #f59e0b;
+
+    &:hover {
+      background: rgba(245, 158, 11, 0.12);
+      color: #d97706;
+    }
+  }
+
+  .health-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 17px;
+    height: 17px;
+    padding: 0 4px;
+    font-size: 10.5px;
+    font-weight: 700;
+    line-height: 1;
+    border-radius: 9px;
+    background: var(--apple-group-bg);
+    color: var(--color-text-2);
+
+    &.badge-error {
+      background: #ef4444;
+      color: #ffffff;
+      box-shadow: 0 1px 3px rgba(239, 68, 68, 0.4);
+    }
+
+    &.badge-warn {
+      background: #f59e0b;
+      color: #ffffff;
+      box-shadow: 0 1px 3px rgba(245, 158, 11, 0.4);
+    }
   }
 }
 

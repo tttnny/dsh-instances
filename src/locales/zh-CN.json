@@ -50,6 +50,16 @@
       "warnTitle": "依赖树提示",
       "errorTitle": "依赖树异常"
     },
+    "healthLogs": "自检日志",
+    "healthModalTitle": "依赖自检日志",
+    "clearLogs": "清空",
+    "copyLogs": "复制",
+    "copiedLogs": "已复制自检日志",
+    "noHealthLogs": "暂无自检异常记录，运行环境正常",
+    "filterAll": "全部",
+    "filterError": "错误",
+    "filterWarn": "警告",
+    "recheckHealth": "重新自检",
     "noProfile": "该实例的 DSH_HOME 下没有可用 Profile"
   },
   "instances": {
