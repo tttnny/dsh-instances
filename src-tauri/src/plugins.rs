@@ -38,8 +38,10 @@ pub struct InstalledPlugin {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SetPluginsEnabledInput {
+    #[serde(alias = "home_id")]
     pub home_id: String,
     pub profile: String,
+    #[serde(alias = "plugin_ids")]
     pub plugin_ids: Vec<String>,
     pub enabled: bool,
 }
@@ -257,8 +259,10 @@ pub async fn set_plugins_enabled(
 #[derive(Clone, Debug, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UninstallPluginInput {
+    #[serde(alias = "home_id")]
     pub home_id: String,
     pub profile: String,
+    #[serde(alias = "plugin_id")]
     pub plugin_id: String,
 }
 

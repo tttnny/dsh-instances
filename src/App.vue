@@ -211,7 +211,7 @@ watch(
 
 // --- Sidebar navigation -------------------------------------------------------
 
-type NavKey = 'home' | 'instances' | 'homes' | 'versions' | 'tasks' | 'settings'
+type NavKey = 'home' | 'instances' | 'homes' | 'profiles' | 'plugins' | 'versions' | 'tasks' | 'settings'
 
 const siderCollapsed = ref(localStorage.getItem('dsh-launcher.siderCollapsed') === '1')
 
@@ -228,6 +228,8 @@ const navSelected = computed<NavKey>(() => {
   const name = route.name as string
   if (name === 'instances' || name === 'instance-edit') return 'instances'
   if (name === 'homes') return 'homes'
+  if (name === 'profiles') return 'profiles'
+  if (name === 'plugins') return 'plugins'
   if (name === 'versions') return 'versions'
   if (name === 'tasks') return 'tasks'
   if (name === 'settings') return 'settings'
@@ -244,6 +246,12 @@ function navGo(key: NavKey) {
       break
     case 'homes':
       void router.push({ name: 'homes' }).catch(() => undefined)
+      break
+    case 'profiles':
+      void router.push({ name: 'profiles' }).catch(() => undefined)
+      break
+    case 'plugins':
+      void router.push({ name: 'plugins' }).catch(() => undefined)
       break
     case 'versions':
       void router.push({ name: 'versions' }).catch(() => undefined)
@@ -272,6 +280,10 @@ const pageTitle = computed(() => {
       return t('instanceEdit.titleEdit')
     case 'homes':
       return t('homes.title')
+    case 'profiles':
+      return t('profiles.title')
+    case 'plugins':
+      return t('plugins.title')
     case 'versions':
       return t('versions.title')
     case 'tasks':
@@ -392,6 +404,35 @@ async function onHeaderMouseDown(e: MouseEvent) {
             </svg>
           </span>
           <span v-if="!siderCollapsed" class="nav-label">{{ t('nav.homes') }}</span>
+        </button>
+
+        <button
+          class="nav-item"
+          :class="{ active: navSelected === 'profiles' }"
+          :title="siderCollapsed ? t('nav.profiles') : ''"
+          @click="navGo('profiles')"
+        >
+          <span class="nav-icon">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+              <circle cx="12" cy="7" r="4" />
+            </svg>
+          </span>
+          <span v-if="!siderCollapsed" class="nav-label">{{ t('nav.profiles') }}</span>
+        </button>
+
+        <button
+          class="nav-item"
+          :class="{ active: navSelected === 'plugins' }"
+          :title="siderCollapsed ? t('nav.plugins') : ''"
+          @click="navGo('plugins')"
+        >
+          <span class="nav-icon">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M19 11V6a2 2 0 0 0-2-2h-5a2 2 0 0 1-2-2 2 2 0 0 0-4 0 2 2 0 0 1-2 2H4a2 2 0 0 0-2 2v5a2 2 0 0 1 2 2 2 2 0 0 0 0 4 2 2 0 0 1-2 2v1a2 2 0 0 0 2 2h5a2 2 0 0 1 2 2 2 2 0 0 0 4 0 2 2 0 0 1 2-2h3a2 2 0 0 0 2-2v-5a2 2 0 0 1 2-2 2 2 0 0 0 0-4 2 2 0 0 1-2-2z" />
+            </svg>
+          </span>
+          <span v-if="!siderCollapsed" class="nav-label">{{ t('nav.plugins') }}</span>
         </button>
 
         <button

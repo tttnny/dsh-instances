@@ -15,9 +15,11 @@
 //! | --- | --- |
 //! | `/` | “显示”→首页 (Cmd+1) |
 //! | `/instances` | “显示”→实例管理 (Cmd+2) |
-//! | `/homes` | “显示”→HOME 与 Profile (Cmd+3) |
-//! | `/versions` | “显示”→版本 (Cmd+4) |
-//! | `/tasks` | “显示”→任务 (Cmd+5) |
+//! | `/homes` | “显示”→HOME (Cmd+3) |
+//! | `/profiles` | “显示”→Profile (Cmd+4) |
+//! | `/plugins` | “显示”→插件 (Cmd+5) |
+//! | `/versions` | “显示”→版本 (Cmd+6) |
+//! | `/tasks` | “显示”→任务 (Cmd+7) |
 //! | `/settings` | App 菜单→偏好设置 (Cmd+,) |
 //!
 //! 非导航动作仍用各自事件（载荷为 `()`）：
@@ -49,6 +51,8 @@ const ID_QUIT: &str = "appmenu-quit";
 const ID_VIEW_HOME: &str = "appmenu-view-home";
 const ID_VIEW_INSTANCES: &str = "appmenu-view-instances";
 const ID_VIEW_HOMES: &str = "appmenu-view-homes";
+const ID_VIEW_PROFILES: &str = "appmenu-view-profiles";
+const ID_VIEW_PLUGINS: &str = "appmenu-view-plugins";
 const ID_VIEW_VERSIONS: &str = "appmenu-view-versions";
 const ID_VIEW_TASKS: &str = "appmenu-view-tasks";
 const ID_VIEW_SETTINGS: &str = "appmenu-view-settings";
@@ -133,15 +137,29 @@ pub fn build_app_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         true,
         Some("CmdOrCtrl+2"),
     )?;
-    let view_homes = MenuItem::with_id(app, ID_VIEW_HOMES, "HOME 与 Profile", true, Some("CmdOrCtrl+3"))?;
+    let view_homes = MenuItem::with_id(app, ID_VIEW_HOMES, "HOME", true, Some("CmdOrCtrl+3"))?;
+    let view_profiles = MenuItem::with_id(
+        app,
+        ID_VIEW_PROFILES,
+        "Profile",
+        true,
+        Some("CmdOrCtrl+4"),
+    )?;
+    let view_plugins = MenuItem::with_id(
+        app,
+        ID_VIEW_PLUGINS,
+        "插件",
+        true,
+        Some("CmdOrCtrl+5"),
+    )?;
     let view_versions = MenuItem::with_id(
         app,
         ID_VIEW_VERSIONS,
         "版本",
         true,
-        Some("CmdOrCtrl+4"),
+        Some("CmdOrCtrl+6"),
     )?;
-    let view_tasks = MenuItem::with_id(app, ID_VIEW_TASKS, "任务", true, Some("CmdOrCtrl+5"))?;
+    let view_tasks = MenuItem::with_id(app, ID_VIEW_TASKS, "任务", true, Some("CmdOrCtrl+7"))?;
     // “设置”不重复占用 Cmd+,，加速键归偏好设置独占。
     let view_settings = MenuItem::with_id(app, ID_VIEW_SETTINGS, "设置", true, None::<&str>)?;
     let sep_v = PredefinedMenuItem::separator(app)?;
@@ -153,6 +171,8 @@ pub fn build_app_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
             &view_home,
             &view_instances,
             &view_homes,
+            &view_profiles,
+            &view_plugins,
             &view_versions,
             &view_tasks,
             &sep_v,
@@ -225,6 +245,8 @@ pub fn handle_menu_event(app: &AppHandle, event: tauri::menu::MenuEvent) {
         ID_VIEW_HOME => show_and_emit(app, "/"),
         ID_VIEW_INSTANCES => show_and_emit(app, "/instances"),
         ID_VIEW_HOMES => show_and_emit(app, "/homes"),
+        ID_VIEW_PROFILES => show_and_emit(app, "/profiles"),
+        ID_VIEW_PLUGINS => show_and_emit(app, "/plugins"),
         ID_VIEW_VERSIONS => show_and_emit(app, "/versions"),
         ID_VIEW_TASKS => show_and_emit(app, "/tasks"),
         ID_VIEW_SETTINGS | ID_PREFERENCES => show_and_emit(app, "/settings"),

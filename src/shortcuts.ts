@@ -13,7 +13,7 @@
  * whichever name t3 finally emits (`menu-navigate` is canonical).
  */
 
-export type ShortcutRoute = 'home' | 'instances' | 'homes' | 'versions' | 'tasks' | 'settings'
+export type ShortcutRoute = 'home' | 'instances' | 'homes' | 'profiles' | 'plugins' | 'versions' | 'tasks' | 'settings'
 
 /** Canonical first, aliases after. */
 export const MENU_NAVIGATE_EVENTS = ['menu-navigate', 'navigate', 'app-navigate'] as const
@@ -39,8 +39,10 @@ export const SHORTCUT_DOCS: ShortcutDoc[] = [
   { labelKey: 'settings.shortcuts.goHome', keys: [MOD, '1'] },
   { labelKey: 'settings.shortcuts.goInstances', keys: [MOD, '2'] },
   { labelKey: 'settings.shortcuts.goHomes', keys: [MOD, '3'] },
-  { labelKey: 'settings.shortcuts.goVersions', keys: [MOD, '4'] },
-  { labelKey: 'settings.shortcuts.goTasks', keys: [MOD, '5'] },
+  { labelKey: 'settings.shortcuts.goProfiles', keys: [MOD, '4'] },
+  { labelKey: 'settings.shortcuts.goPlugins', keys: [MOD, '5'] },
+  { labelKey: 'settings.shortcuts.goVersions', keys: [MOD, '6'] },
+  { labelKey: 'settings.shortcuts.goTasks', keys: [MOD, '7'] },
   { labelKey: 'settings.shortcuts.openSettings', keys: [MOD, ','] },
   { labelKey: 'settings.shortcuts.goTasksAlt', keys: [MOD, 'K'] },
   { labelKey: 'settings.shortcuts.showMain', keys: [MOD, '0'], native: true },
@@ -60,6 +62,10 @@ const NAVIGATE_TARGETS: Record<string, ShortcutRoute> = {
   '/instances': 'instances',
   homes: 'homes',
   '/homes': 'homes',
+  profiles: 'profiles',
+  '/profiles': 'profiles',
+  plugins: 'plugins',
+  '/plugins': 'plugins',
   versions: 'versions',
   '/versions': 'versions',
 }
@@ -138,34 +144,40 @@ export function handleAppKeydown(e: KeyboardEvent, actions: ShortcutActions): bo
   // Shift+Cmd+digit produces symbols on some layouts; only bare combos count.
   if (e.shiftKey) return false
 
-  switch (e.key) {
-    case '1':
-      actions.go('home')
-      return true
-    case '2':
-      actions.go('instances')
-      return true
-    case '3':
-      actions.go('homes')
-      return true
-    case '4':
-      actions.go('versions')
-      return true
-    case '5':
-      actions.go('tasks')
-      return true
-    case ',':
-      actions.go('settings')
-      return true
-    case 'k':
-    case 'K':
-      actions.go('tasks')
-      return true
-    case 'r':
-    case 'R':
-      actions.refresh()
-      return true
-    default:
-      return false
-  }
+    switch (e.key) {
+      case '1':
+        actions.go('home')
+        return true
+      case '2':
+        actions.go('instances')
+        return true
+      case '3':
+        actions.go('homes')
+        return true
+      case '4':
+        actions.go('profiles')
+        return true
+      case '5':
+        actions.go('plugins')
+        return true
+      case '6':
+        actions.go('versions')
+        return true
+      case '7':
+        actions.go('tasks')
+        return true
+      case ',':
+        actions.go('settings')
+        return true
+      case 'k':
+      case 'K':
+        actions.go('tasks')
+        return true
+      case 'r':
+      case 'R':
+        actions.refresh()
+        return true
+      default:
+        return false
+    }
 }

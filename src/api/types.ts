@@ -166,14 +166,14 @@ export interface InstalledPlugin {
 }
 
 export interface SetPluginsEnabledInput {
-  home_id: string
+  homeId: string
   profile: string
   pluginIds: string[]
   enabled: boolean
 }
 
 export interface UninstallPluginInput {
-  home_id: string
+  homeId: string
   profile: string
   pluginId: string
 }
