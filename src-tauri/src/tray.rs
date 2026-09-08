@@ -15,7 +15,6 @@ const MENU_STATUS: &str = "status-header";
 const MENU_EMPTY: &str = "empty-hint";
 const MENU_QUICK_SUB: &str = "quick-entries";
 const MENU_QUICK_HOME: &str = "quick::home";
-const MENU_QUICK_INSTANCES: &str = "quick::instances";
 const MENU_QUICK_HOMES: &str = "quick::homes";
 const MENU_QUICK_PROFILES: &str = "quick::profiles";
 const MENU_QUICK_PLUGINS: &str = "quick::plugins";
@@ -60,8 +59,6 @@ pub fn build_tray(app: &AppHandle) -> tauri::Result<()> {
                 show_launcher(app);
             } else if id == MENU_QUICK_HOME {
                 show_and_navigate(app, "/");
-            } else if id == MENU_QUICK_INSTANCES {
-                show_and_navigate(app, "/instances");
             } else if id == MENU_QUICK_HOMES {
                 show_and_navigate(app, "/homes");
             } else if id == MENU_QUICK_PROFILES {
@@ -214,8 +211,6 @@ fn build_menu(app: &AppHandle, running: &[RunningItem]) -> tauri::Result<Menu<ta
     // Launcher page shortcuts: show the main window and ask the frontend to
     // navigate (event is a no-op until the frontend listens).
     let quick_home = MenuItem::with_id(app, MENU_QUICK_HOME, "回到首页", true, None::<&str>)?;
-    let quick_instances =
-        MenuItem::with_id(app, MENU_QUICK_INSTANCES, "实例管理", true, None::<&str>)?;
     let quick_homes = MenuItem::with_id(app, MENU_QUICK_HOMES, "HOME", true, None::<&str>)?;
     let quick_profiles = MenuItem::with_id(app, MENU_QUICK_PROFILES, "Profile", true, None::<&str>)?;
     let quick_plugins = MenuItem::with_id(app, MENU_QUICK_PLUGINS, "插件", true, None::<&str>)?;
@@ -223,7 +218,6 @@ fn build_menu(app: &AppHandle, running: &[RunningItem]) -> tauri::Result<Menu<ta
     let quick_tasks = MenuItem::with_id(app, MENU_QUICK_TASKS, "任务", true, None::<&str>)?;
     let quick_refs: Vec<&dyn IsMenuItem<tauri::Wry>> = vec![
         &quick_home,
-        &quick_instances,
         &quick_homes,
         &quick_profiles,
         &quick_plugins,

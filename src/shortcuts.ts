@@ -37,12 +37,11 @@ const MOD = '\u2318 / Ctrl'
 
 export const SHORTCUT_DOCS: ShortcutDoc[] = [
   { labelKey: 'settings.shortcuts.goHome', keys: [MOD, '1'] },
-  { labelKey: 'settings.shortcuts.goInstances', keys: [MOD, '2'] },
-  { labelKey: 'settings.shortcuts.goHomes', keys: [MOD, '3'] },
-  { labelKey: 'settings.shortcuts.goProfiles', keys: [MOD, '4'] },
-  { labelKey: 'settings.shortcuts.goPlugins', keys: [MOD, '5'] },
-  { labelKey: 'settings.shortcuts.goVersions', keys: [MOD, '6'] },
-  { labelKey: 'settings.shortcuts.goTasks', keys: [MOD, '7'] },
+  { labelKey: 'settings.shortcuts.goHomes', keys: [MOD, '2'] },
+  { labelKey: 'settings.shortcuts.goProfiles', keys: [MOD, '3'] },
+  { labelKey: 'settings.shortcuts.goPlugins', keys: [MOD, '4'] },
+  { labelKey: 'settings.shortcuts.goVersions', keys: [MOD, '5'] },
+  { labelKey: 'settings.shortcuts.goTasks', keys: [MOD, '6'] },
   { labelKey: 'settings.shortcuts.openSettings', keys: [MOD, ','] },
   { labelKey: 'settings.shortcuts.goTasksAlt', keys: [MOD, 'K'] },
   { labelKey: 'settings.shortcuts.showMain', keys: [MOD, '0'], native: true },
@@ -58,8 +57,8 @@ const NAVIGATE_TARGETS: Record<string, ShortcutRoute> = {
   '/settings': 'settings',
   tasks: 'tasks',
   '/tasks': 'tasks',
-  instances: 'instances',
-  '/instances': 'instances',
+  instances: 'home',
+  '/instances': 'home',
   homes: 'homes',
   '/homes': 'homes',
   profiles: 'profiles',
@@ -149,20 +148,18 @@ export function handleAppKeydown(e: KeyboardEvent, actions: ShortcutActions): bo
         actions.go('home')
         return true
       case '2':
-        actions.go('instances')
-        return true
-      case '3':
         actions.go('homes')
         return true
-      case '4':
+      case '3':
         actions.go('profiles')
         return true
-      case '5':
+      case '4':
         actions.go('plugins')
         return true
-      case '6':
+      case '5':
         actions.go('versions')
         return true
+      case '6':
       case '7':
         actions.go('tasks')
         return true

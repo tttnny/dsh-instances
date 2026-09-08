@@ -225,9 +225,14 @@ pub fn load_config(path: &Path) -> Config {
     match fs::read_to_string(path) {
         Ok(raw) => match serde_json::from_str::<Config>(&raw) {
             Ok(mut cfg) => {
+                let data_dir = path.parent().unwrap_or(Path::new("."));
                 dedupe_homes(&mut cfg);
                 cleanup_orphan_homes(&mut cfg);
                 ensure_user_dsh_home(&mut cfg);
+                let changed = migrate_instances_to_dedicated_homes(data_dir, &mut cfg);
+                if changed {
+                    let _ = save_config(path, &cfg);
+                }
                 cfg
             }
             Err(err) => {
@@ -320,6 +325,66 @@ pub fn dedupe_homes(cfg: &mut Config) {
         }
     }
     cfg.homes = kept;
+}
+
+/// Enforces the 1-version-1-instance contract and migrates instances to dedicated
+/// homes under `<data_dir>/homes/<version>` (issue #3, #4).
+pub fn migrate_instances_to_dedicated_homes(data_dir: &Path, cfg: &mut Config) -> bool {
+    let mut modified = false;
+
+    // 1. Remove instances whose version no longer exists.
+    let old_inst_len = cfg.instances.len();
+    cfg.instances.retain(|i| cfg.versions.iter().any(|v| v.id == i.version_id));
+    if cfg.instances.len() != old_inst_len {
+        modified = true;
+    }
+
+    // 2. Ensure each version has its dedicated home and 1:1 instance.
+    for v in &cfg.versions {
+        let expected_home_path = data_dir.join("homes").join(sanitize_name(&v.version));
+
+        // Find existing home by path or create it.
+        let home_id = if let Some(h) = cfg.homes.iter().find(|h| paths_equal(&h.path, &expected_home_path)) {
+            h.id.clone()
+        } else {
+            let hid = new_id("h");
+            cfg.homes.push(DshHome {
+                id: hid.clone(),
+                name: v.version.clone(),
+                path: expected_home_path.clone(),
+            });
+            modified = true;
+            hid
+        };
+
+        // Find existing instance for this version.
+        if let Some(inst) = cfg.instances.iter_mut().find(|i| i.version_id == v.id) {
+            if inst.name != v.version {
+                inst.name = v.version.clone();
+                modified = true;
+            }
+            // If the instance's home_id is missing or invalid, point it to its dedicated home.
+            if !cfg.homes.iter().any(|h| h.id == inst.home_id) {
+                inst.home_id = home_id;
+                modified = true;
+            }
+        } else {
+            cfg.instances.push(DshInstance {
+                id: new_id("i"),
+                name: v.version.clone(),
+                version_id: v.id.clone(),
+                home_id,
+                env_overrides: BTreeMap::new(),
+                default_profile: Some("web".to_string()),
+                last_profile: None,
+                icon: None,
+                port: None,
+            });
+            modified = true;
+        }
+    }
+
+    modified
 }
 
 pub fn save_config(path: &Path, cfg: &Config) -> Result<(), String> {

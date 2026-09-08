@@ -205,7 +205,7 @@ async function onSave() {
     })
     await store.refreshInstances()
     Message.success(t('instanceEdit.saved'))
-    router.push({ name: 'instances' })
+    router.push({ name: 'home' })
   } catch (e) {
     Message.error(String(e))
   } finally {
@@ -308,7 +308,7 @@ const homeLabel = computed(() => {
       <!-- Form Body -->
       <a-form layout="vertical" class="apple-edit-form" :model="{}">
         <a-form-item :label="t('instanceEdit.name')" required>
-          <a-input v-model="name" :placeholder="t('instanceEdit.namePlaceholder')" style="max-width: 420px" />
+          <a-input v-model="name" :placeholder="t('instanceEdit.namePlaceholder')" style="max-width: 420px" disabled />
         </a-form-item>
 
         <a-form-item v-if="editingId" :label="t('instanceEdit.icon')">
@@ -347,7 +347,7 @@ const homeLabel = computed(() => {
         </a-form-item>
 
         <a-form-item :label="t('instanceEdit.version')" required>
-          <a-select v-model="versionId" style="max-width: 420px">
+          <a-select v-model="versionId" style="max-width: 420px" disabled>
             <a-option v-for="v in store.versions" :key="v.id" :value="v.id">{{ v.version }}</a-option>
           </a-select>
         </a-form-item>
@@ -423,7 +423,7 @@ const homeLabel = computed(() => {
 
       <!-- Footer Buttons -->
       <div class="edit-footer-bar">
-        <button type="button" class="mac-secondary-btn" @click="router.push({ name: 'instances' })">
+        <button type="button" class="mac-secondary-btn" @click="router.push({ name: 'home' })">
           {{ t('instanceEdit.cancel') }}
         </button>
         <button

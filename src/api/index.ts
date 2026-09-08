@@ -194,6 +194,10 @@ async function mockCall<T>(cmd: string, args?: Record<string, unknown>): Promise
         { version: '0.1.0-rc.4', released_at: '2026-07-01T10:00:00Z' },
         { version: '0.1.0-rc.3', released_at: '2026-06-15T08:00:00Z' },
       ] as T
+    case 'start_install_version_task': {
+      const version = String(args?.version ?? '').trim()
+      return mockCall('start_create_instance_task', { name: version, version, home_id: null, dedicated: true })
+    }
     case 'start_create_instance_task': {
       const name = String(args?.name ?? '').trim()
       const version = String(args?.version ?? '').trim()
@@ -556,6 +560,7 @@ async function mockCall<T>(cmd: string, args?: Record<string, unknown>): Promise
     case 'open_launcher_log':
     case 'open_instance_log':
     case 'open_instance_directory':
+    case 'open_home_directory':
       // Browser preview has no file manager; the target path is reported as-is.
       return 'C:\\Users\\Administrator\\AppData\\Roaming\\in.dsh-plug.dsh-launcher' as T
     case 'get_launcher_directory':
@@ -620,6 +625,9 @@ export const api = {
   listVersions: () => call<DshVersion[]>('list_versions'),
   fetchAvailableVersions: () => call<RemoteVersion[]>('fetch_available_versions'),
   removeVersion: (id: string) => call<void>('remove_version', { id }),
+  /** Downloads & installs a DSH version, auto-creates dedicated HOME, and registers the 1:1 instance. */
+  startInstallVersionTask: (version: string) =>
+    call<string>('start_install_version_task', { version }),
 
   startCreateInstanceTask: (name: string, version: string, homeId: string | null, dedicated: boolean) =>
     call<string>('start_create_instance_task', { name, version, home_id: homeId, dedicated }),
@@ -683,6 +691,9 @@ export const api = {
   /** Opens an instance's DSH_HOME directory in the file manager. */
   openInstanceDirectory: (instanceId: string) =>
     call<string>('open_instance_directory', { instanceId }),
+  /** Opens a DSH_HOME directory in the file manager. */
+  openHomeDirectory: (homeId: string) =>
+    call<string>('open_home_directory', { homeId }),
   /** The running launcher's own version (stamped at build time by CI). */
   async getLauncherVersion(): Promise<string> {
     if (isTauri) {

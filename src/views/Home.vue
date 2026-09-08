@@ -8,7 +8,6 @@ import { useLauncherStore } from '@/stores/launcher'
 import type { HealthLogItem } from '@/stores/launcher'
 import type { DshInstance } from '@/api/types'
 import launcherDefaultIcon from '@/assets/launcher-icon.png'
-import NewInstanceDialog from '@/components/NewInstanceDialog.vue'
 import HealthLogModal from '@/components/HealthLogModal.vue'
 
 const router = useRouter()
@@ -263,12 +262,6 @@ async function onViewLog(inst: DshInstance) {
   }
 }
 
-function goNew() {
-  newVisible.value = true
-}
-
-const newVisible = ref(false)
-
 const terminalBusy = ref<Record<string, boolean>>({})
 
 async function onOpenTerminal(inst: DshInstance) {
@@ -283,8 +276,32 @@ async function onOpenTerminal(inst: DshInstance) {
   }
 }
 
-function goManage() {
-  void router.push({ name: 'instances' }).catch(() => undefined)
+const homeSaving = ref<Record<string, boolean>>({})
+
+async function onChangeHome(inst: DshInstance, newHomeId: string) {
+  if (!newHomeId || newHomeId === inst.home_id) return
+  const st = statusOf(inst.id).state
+  if (st === 'running' || st === 'starting') {
+    Message.warning(t('home.runningCannotChangeHome') || '实例运行中，请先停止实例再切换 HOME')
+    return
+  }
+  homeSaving.value[inst.id] = true
+  try {
+    const updated: DshInstance = {
+      ...inst,
+      home_id: newHomeId,
+    }
+    await api.updateInstance(updated)
+    await store.refreshInstances()
+    delete profilesById.value[inst.id]
+    profileSel.value[inst.id] = undefined
+    await loadProfilesFor(updated)
+    Message.success(t('instanceEdit.saved'))
+  } catch (e) {
+    Message.error(String(e))
+  } finally {
+    homeSaving.value[inst.id] = false
+  }
 }
 </script>
 
@@ -334,25 +351,6 @@ function goManage() {
           {{ store.healthTotalCount > 99 ? '99+' : store.healthTotalCount }}
         </span>
       </button>
-
-      <span class="home-spacer" />
-
-      <button class="mac-secondary-btn" @click="goManage">
-        <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
-          <line x1="2" y1="4" x2="14" y2="4" />
-          <line x1="2" y1="8" x2="14" y2="8" />
-          <line x1="2" y1="12" x2="14" y2="12" />
-        </svg>
-        <span>{{ t('home.instanceList') }}</span>
-      </button>
-
-      <button class="mac-primary-btn" @click="goNew">
-        <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-          <line x1="8" y1="3" x2="8" y2="13" />
-          <line x1="3" y1="8" x2="13" y2="8" />
-        </svg>
-        <span>{{ t('home.newInstance') }}</span>
-      </button>
     </div>
 
     <!-- Empty state -->
@@ -370,8 +368,8 @@ function goManage() {
       </div>
       <div class="empty-title">{{ t('instances.emptyTitle') }}</div>
       <div class="empty-desc">{{ t('instances.emptyDesc') }}</div>
-      <button class="mac-primary-btn" style="margin-top: 14px;" @click="goNew">
-        {{ t('home.newInstance') }}
+      <button class="mac-primary-btn" style="margin-top: 14px;" @click="router.push('/versions')">
+        {{ t('versions.title') }}
       </button>
     </div>
 
@@ -415,6 +413,23 @@ function goManage() {
               {{ t('home.sharedHome') }}
             </span>
           </a-tooltip>
+        </div>
+
+        <!-- Home Selection Row -->
+        <div class="card-profile-row">
+          <span class="field-label">HOME</span>
+          <div class="profile-select-capsule">
+            <a-select
+              :model-value="inst.home_id"
+              size="small"
+              class="card-profile-select"
+              :disabled="statusOf(inst.id).state === 'running' || statusOf(inst.id).state === 'starting' || homeSaving[inst.id]"
+              :loading="homeSaving[inst.id]"
+              @change="(val) => onChangeHome(inst, String(val))"
+            >
+              <a-option v-for="h in store.homes" :key="h.id" :value="h.id">{{ h.name }}</a-option>
+            </a-select>
+          </div>
         </div>
 
         <!-- Profile Selection Row -->
@@ -549,7 +564,6 @@ function goManage() {
       </div>
     </div>
 
-    <NewInstanceDialog v-model:visible="newVisible" />
     <HealthLogModal v-model:visible="healthLogsVisible" :profile-map="profileSel" />
   </div>
 </template>

@@ -1,18 +1,17 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { Message } from '@arco-design/web-vue'
+import { Message, Modal } from '@arco-design/web-vue'
 import { api } from '@/api'
 import { useLauncherStore } from '@/stores/launcher'
 import type { RemoteVersion } from '@/api/types'
-import NewInstanceDialog from '@/components/NewInstanceDialog.vue'
 
+const router = useRouter()
 const { t } = useI18n()
 const store = useLauncherStore()
 
 const loading = computed(() => store.remoteLoading)
-const dialogVisible = ref(false)
-const dialogVersion = ref<string | null>(null)
 
 onMounted(() => {
   store.refreshRemoteVersions()
@@ -45,9 +44,29 @@ function formatDate(iso: string | null): string {
   return d.toLocaleString()
 }
 
-function openNew(version: string | null) {
-  dialogVersion.value = version
-  dialogVisible.value = true
+function onSelectVersion(row: RemoteVersion) {
+  if (installedSet.value.has(row.version)) {
+    Message.info(t('versions.alreadyInstalled', { version: row.version }))
+    return
+  }
+  const isSourceBuild = row.source === 'github'
+  Modal.confirm({
+    title: t('versions.confirmInstallTitle'),
+    content: isSourceBuild
+      ? t('versions.confirmInstallSourceContent', { version: row.version })
+      : t('versions.confirmInstallContent', { version: row.version }),
+    okText: t('versions.installNow'),
+    cancelText: t('common.cancel'),
+    onOk: async () => {
+      try {
+        await api.startInstallVersionTask(row.version)
+        Message.success(t('versions.installTaskStarted', { version: row.version }))
+        void router.push('/tasks')
+      } catch (e) {
+        Message.error(String(e))
+      }
+    },
+  })
 }
 
 function usedByCount(versionId: string) {
@@ -79,13 +98,6 @@ async function onRemove(id: string, version: string) {
             </svg>
             <span>{{ t('common.refresh') }}</span>
           </button>
-          <button class="mac-primary-btn" @click="openNew(null)">
-            <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2">
-              <line x1="8" y1="3" x2="8" y2="13" />
-              <line x1="3" y1="8" x2="13" y2="8" />
-            </svg>
-            <span>{{ t('versions.newInstance') }}</span>
-          </button>
         </div>
       </div>
 
@@ -94,7 +106,7 @@ async function onRemove(id: string, version: string) {
           v-for="row in latest"
           :key="row.v.version"
           class="version-row"
-          @click="openNew(row.v.version)"
+          @click="onSelectVersion(row.v)"
         >
           <div class="version-icon" :class="{ pre: isPrerelease(row.v.version) }">
             <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
@@ -132,7 +144,7 @@ async function onRemove(id: string, version: string) {
     <a-collapse :default-active-key="['stable', 'prerelease']" class="apple-collapse-card">
       <a-collapse-item key="stable" :header="t('versions.stable')">
         <template v-if="stable.length">
-          <div v-for="v in stable" :key="v.version" class="version-row" @click="openNew(v.version)">
+          <div v-for="v in stable" :key="v.version" class="version-row" @click="onSelectVersion(v)">
             <div class="version-icon">
               <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                 <line x1="16.5" y1="9.4" x2="7.5" y2="4.21" />
@@ -165,7 +177,7 @@ async function onRemove(id: string, version: string) {
 
       <a-collapse-item key="prerelease" :header="t('versions.prerelease')">
         <template v-if="prerelease.length">
-          <div v-for="v in prerelease" :key="v.version" class="version-row" @click="openNew(v.version)">
+          <div v-for="v in prerelease" :key="v.version" class="version-row" @click="onSelectVersion(v)">
             <div class="version-icon pre">
               <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                 <line x1="16.5" y1="9.4" x2="7.5" y2="4.21" />
@@ -224,8 +236,6 @@ async function onRemove(id: string, version: string) {
       </div>
       <a-empty v-if="store.versions.length === 0" :description="t('versions.emptyInstalled')" />
     </div>
-
-    <NewInstanceDialog v-model:visible="dialogVisible" :preset-version="dialogVersion" />
   </div>
 </template>
 

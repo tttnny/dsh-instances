@@ -73,6 +73,18 @@ fn now_millis() -> i64 {
 // ---------------------------------------------------------------------------
 
 /// Enqueues a background task that installs the given DSH version (if not
+/// installed yet), auto-creates its dedicated HOME, and registers the 1:1 instance.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn start_install_version_task(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    version: String,
+) -> Result<String, String> {
+    let v = version.trim().to_string();
+    start_create_instance_task(app, state, v.clone(), v, None, true).await
+}
+
+/// Enqueues a background task that installs the given DSH version (if not
 /// installed yet) and then creates the instance. Returns the task id.
 #[tauri::command(rename_all = "snake_case")]
 pub async fn start_create_instance_task(
@@ -139,10 +151,16 @@ pub async fn start_create_instance_task(
         }
     }
 
+    let task_label = if name == version {
+        format!("下载 DSH {version} 并创建实例")
+    } else {
+        format!("下载 DSH {version} 并创建实例「{name}」")
+    };
+
     let task = TaskInfo {
         id: new_id("t"),
         kind: "create-instance".to_string(),
-        label: format!("下载 DSH {version} 并创建实例「{name}」"),
+        label: task_label,
         version: version.clone(),
         state: TaskState::Running,
         percent: 0,
@@ -337,9 +355,13 @@ async fn do_create_instance(
             .clone()
     };
 
-    // 2.5. Ensure the default web profile exists and a `__temp__` template
-    // copy is created, so later profiles can be derived from it.
-    ensure_web_profile_template(app, state, task_id, &home_path, &version_record).await?;
+    // 2.5. Only dedicated (freshly allocated) homes need the baseline `web`
+    // profile and `__temp__` template materialized. When the caller selects an
+    // existing HOME, that HOME is already established and its profiles should
+    // not be touched during instance creation.
+    if home_id.is_none() {
+        ensure_web_profile_template(app, state, task_id, &home_path, &version_record).await?;
+    }
 
     // 3. Create the instance record.
     let inst = {
@@ -388,6 +410,24 @@ async fn ensure_web_profile_template(
     if temp_dir.exists() {
         return Ok(());
     }
+    let web_dir = profiles.join("web");
+
+    // A HOME that has run DSH before already has a materialized `web` profile
+    // (e.g. the default ~/.dsh of a live instance). Booting DSH again would
+    // bind the port pinned in that profile's cordis.patch.yml — DSH honors
+    // the patch over the CLI `--port` — and crash with EADDRINUSE while the
+    // owning instance is running. Copying is all the template needs.
+    let web_populated = web_dir.is_dir()
+        && std::fs::read_dir(&web_dir)
+            .map(|mut d| d.next().is_some())
+            .unwrap_or(false);
+    if web_populated {
+        push_task_log(app, state, task_id, "web profile 已存在，直接复制为 __temp__ 模板").await;
+        copy_dir(&web_dir, &temp_dir).map_err(|e| format!("复制 __temp__ profile 失败: {e}"))?;
+        scrub_profile_port_pin(&temp_dir);
+        push_task_log(app, state, task_id, "web profile 模板 __temp__ 已创建").await;
+        return Ok(());
+    }
 
     let bin = crate::process::version_bin(&version.dir);
     if !crate::process::version_bin_ready(&version.dir) {
@@ -417,6 +457,35 @@ async fn ensure_web_profile_template(
     )
     .spawn()
     .map_err(|e| format!("启动 DSH 生成 profile 失败: {e}"))?;
+
+    // Drain stderr concurrently: DSH reports boot failures (missing native
+    // addons, plugin load errors) on stderr, and an undrained pipe could also
+    // fill up and stall the child. Keep the tail for the failure message.
+    let stderr_tail = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let mut stderr_reader = None;
+    if let Some(err) = child.stderr.take() {
+        let tail = stderr_tail.clone();
+        let app2 = app.clone();
+        let tid = task_id.to_string();
+        stderr_reader = Some(tauri::async_runtime::spawn(async move {
+            let state = app2.state::<AppState>();
+            let mut lines = BufReader::new(err).lines();
+            while let Ok(Some(l)) = lines.next_line().await {
+                let l = l.trim_end_matches(['\r', '\n']).trim().to_string();
+                if l.is_empty() {
+                    continue;
+                }
+                {
+                    let mut guard = tail.lock().unwrap();
+                    if guard.len() >= 200 {
+                        guard.remove(0);
+                    }
+                    guard.push(l.clone());
+                }
+                push_task_log(&app2, &state, &tid, &l).await;
+            }
+        }));
+    }
 
     // Wait for the web URL to appear (profile has been created), then stop it.
     let mut timer = tokio::time::interval(std::time::Duration::from_millis(300));
@@ -449,22 +518,85 @@ async fn ensure_web_profile_template(
         }
     }
 
-    // Take ownership of the child handle to kill it (we already removed stdout).
-    let _ = child.stderr.take();
+    // Stop DSH, then give the stderr reader a moment to flush whatever a
+    // crash printed (the child is gone, so its pipes hit EOF).
     child.kill().await.ok();
+    let _ = child.wait().await;
+    if let Some(reader) = stderr_reader.take() {
+        let _ = tokio::time::timeout(std::time::Duration::from_millis(1000), reader).await;
+    }
 
     if !ready {
-        return Err("生成 web profile 超时或失败".to_string());
+        let summary = {
+            let tail = stderr_tail.lock().unwrap();
+            let errors: Vec<String> = tail
+                .iter()
+                .filter(|l| l.to_lowercase().contains("error"))
+                .cloned()
+                .collect();
+            let source: &[String] = if errors.is_empty() { &tail } else { &errors };
+            source
+                .iter()
+                .rev()
+                .take(2)
+                .rev()
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(" | ")
+        };
+        if summary.is_empty() {
+            return Err("生成 web profile 超时或失败".to_string());
+        }
+        return Err(format!("生成 web profile 超时或失败：{summary}"));
     }
 
     // Copy profiles/web → profiles/__temp__.
-    let web_dir = profiles.join("web");
     if !web_dir.exists() {
         return Err("web profile 目录未生成".to_string());
     }
     copy_dir(&web_dir, &temp_dir).map_err(|e| format!("复制 __temp__ profile 失败: {e}"))?;
+    scrub_profile_port_pin(&temp_dir);
     push_task_log(app, state, task_id, "web profile 模板 __temp__ 已创建").await;
     Ok(())
+}
+
+/// Rewrites the webserver port pin inside a copied profile's
+/// `cordis.patch.yml` to `0` (OS-assigned random port). DSH persists the first
+/// web bind into the profile patch ("lan-bind" block) and honors it over the
+/// CLI `--port`, so a template carrying a concrete port would make every
+/// instance derived from it fight over that port (EADDRINUSE) and ignore the
+/// launcher's per-instance `--port`.
+pub(crate) fn scrub_profile_port_pin(profile_dir: &std::path::Path) {
+    let patch = profile_dir.join("cordis.patch.yml");
+    let Ok(raw) = std::fs::read_to_string(&patch) else {
+        return;
+    };
+    let mut in_webserver = false;
+    let mut changed = false;
+    let lines: Vec<String> = raw
+        .lines()
+        .map(|l| {
+            let trimmed = l.trim_start();
+            if trimmed.starts_with("- id:") {
+                in_webserver = trimmed.starts_with("- id: webserver");
+            } else if in_webserver && trimmed.starts_with("port:") {
+                let indent = " ".repeat(l.len() - trimmed.len());
+                let new = format!("{indent}port: 0");
+                if new != l {
+                    changed = true;
+                }
+                return new;
+            }
+            l.to_string()
+        })
+        .collect();
+    if changed {
+        let mut out = lines.join("\n");
+        if !out.ends_with('\n') {
+            out.push('\n');
+        }
+        let _ = std::fs::write(&patch, out);
+    }
 }
 
 /// Simple deterministic-ish port offset so multiple homes don't collide often.
@@ -607,7 +739,52 @@ async fn install_version_streamed(
         }
     }
 
+    ensure_pending_builds(app, state, task_id, &dir, &pnpm_prog).await?;
+
     register_version(state, version, dir)
+}
+
+/// Runs `pnpm rebuild` when the finished install still lists packages in
+/// `pendingBuilds` (build scripts pnpm skipped). A tree in that state is
+/// missing compiled native addons (fs-ext since dsh 0.1.3-alpha.2) and DSH
+/// fails to boot with an opaque MODULE_NOT_FOUND, so a half-built version is
+/// refused instead of registered.
+async fn ensure_pending_builds(
+    app: &AppHandle,
+    state: &State<'_, AppState>,
+    task_id: &str,
+    dir: &std::path::Path,
+    pnpm_prog: &std::path::Path,
+) -> Result<(), String> {
+    let pending = pending_builds(dir);
+    if pending.is_empty() {
+        return Ok(());
+    }
+    let shown = pending.iter().take(3).cloned().collect::<Vec<_>>().join(", ");
+    push_task_log(
+        app,
+        state,
+        task_id,
+        &format!(
+            "检测到 {} 个依赖的构建脚本未执行（{shown}…），运行 pnpm rebuild 补建…",
+            pending.len()
+        ),
+    )
+    .await;
+    let mut cmd = tokio::process::Command::new(pnpm_prog);
+    crate::process::hide_console(&mut cmd);
+    cmd.current_dir(dir).arg("rebuild").env("CI", "true");
+    run_streamed_command(app, state, task_id, cmd, "pnpm rebuild").await?;
+    let still = pending_builds(dir);
+    if !still.is_empty() {
+        let shown = still.iter().take(3).cloned().collect::<Vec<_>>().join(", ");
+        return Err(format!(
+            "pnpm rebuild 后仍有 {} 个依赖未完成构建: {shown}",
+            still.len()
+        ));
+    }
+    push_task_log(app, state, task_id, "依赖构建脚本补建完成").await;
+    Ok(())
 }
 
 /// Records an installed version in the config (idempotent by version
@@ -751,6 +928,7 @@ async fn install_version_from_repo(
     }
     cmd.env("CI", "true");
     run_streamed_command(app, state, task_id, cmd, "pnpm install（源码）").await?;
+    ensure_pending_builds(app, state, task_id, &dir, &pnpm_prog).await?;
 
     // 3. Build. Per the upstream README, `pnpm run build` prepares every
     //    repository artifact; `pnpm dsh web` then runs without rebuilding.
@@ -770,6 +948,43 @@ async fn install_version_from_repo(
         ));
     }
     register_version(state, version, dir)
+}
+
+/// Packages pnpm recorded under `pendingBuilds` in `node_modules/.modules.yaml`
+/// — dependencies whose build scripts did not run. The file is JSON-flavored
+/// YAML; parse line-wise so a missing or odd file just means "nothing pending".
+fn pending_builds(dir: &std::path::Path) -> Vec<String> {
+    let Ok(raw) = std::fs::read_to_string(dir.join("node_modules").join(".modules.yaml")) else {
+        return Vec::new();
+    };
+    let mut lines = raw.lines().map(str::trim);
+    while let Some(line) = lines.next() {
+        if !line.starts_with("\"pendingBuilds\"") && !line.starts_with("pendingBuilds:") {
+            continue;
+        }
+        let mut pkgs = Vec::new();
+        for entry in lines.by_ref() {
+            let trimmed = entry.trim();
+            if trimmed.starts_with(']') {
+                break;
+            }
+            if trimmed.is_empty() {
+                continue;
+            }
+            let Some(item) = trimmed
+                .strip_prefix("- ")
+                .or_else(|| trimmed.strip_prefix('"'))
+                .map(|s| s.trim_end_matches(',').trim_end_matches('"').trim())
+            else {
+                break; // a different top-level key — the list ended
+            };
+            if !item.is_empty() {
+                pkgs.push(item.to_string());
+            }
+        }
+        return pkgs;
+    }
+    Vec::new()
 }
 
 /// Whether the task's streamed log mentions pnpm's ignored-build-scripts

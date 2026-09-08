@@ -215,7 +215,7 @@ watch(
 
 // --- Sidebar navigation -------------------------------------------------------
 
-type NavKey = 'home' | 'instances' | 'homes' | 'profiles' | 'plugins' | 'versions' | 'tasks' | 'settings'
+type NavKey = 'home' | 'homes' | 'profiles' | 'plugins' | 'versions' | 'tasks' | 'settings'
 
 const siderCollapsed = ref(localStorage.getItem('dsh-launcher.siderCollapsed') === '1')
 
@@ -230,7 +230,7 @@ function toggleSider() {
 
 const navSelected = computed<NavKey>(() => {
   const name = route.name as string
-  if (name === 'instances' || name === 'instance-edit') return 'instances'
+  if (name === 'instance-edit') return 'home'
   if (name === 'homes') return 'homes'
   if (name === 'profiles') return 'profiles'
   if (name === 'plugins') return 'plugins'
@@ -244,9 +244,6 @@ function navGo(key: NavKey) {
   switch (key) {
     case 'home':
       void router.push({ name: 'home' }).catch(() => undefined)
-      break
-    case 'instances':
-      void router.push({ name: 'instances' }).catch(() => undefined)
       break
     case 'homes':
       void router.push({ name: 'homes' }).catch(() => undefined)
@@ -481,23 +478,6 @@ function onWinBlur() {
             </svg>
           </span>
           <span v-if="!siderCollapsed" class="nav-label">{{ t('nav.home') }}</span>
-        </button>
-
-        <button
-          class="nav-item"
-          :class="{ active: navSelected === 'instances' }"
-          :title="siderCollapsed ? t('nav.instances') : ''"
-          @click="navGo('instances')"
-        >
-          <span class="nav-icon">
-            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <rect x="3" y="3" width="7" height="7" rx="1.5" />
-              <rect x="14" y="3" width="7" height="7" rx="1.5" />
-              <rect x="14" y="14" width="7" height="7" rx="1.5" />
-              <rect x="3" y="14" width="7" height="7" rx="1.5" />
-            </svg>
-          </span>
-          <span v-if="!siderCollapsed" class="nav-label">{{ t('nav.instances') }}</span>
           <span v-if="!siderCollapsed && runningInstanceCount > 0" class="nav-pill-badge">
             {{ runningInstanceCount }}
           </span>
@@ -541,7 +521,7 @@ function onWinBlur() {
         >
           <span class="nav-icon">
             <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M19 11V6a2 2 0 0 0-2-2h-5a2 2 0 0 1-2-2 2 2 0 0 0-4 0 2 2 0 0 1-2 2H4a2 2 0 0 0-2 2v5a2 2 0 0 1 2 2 2 2 0 0 0 0 4 2 2 0 0 1-2 2v1a2 2 0 0 0 2 2h5a2 2 0 0 1 2 2 2 2 0 0 0 4 0 2 2 0 0 1 2-2h3a2 2 0 0 0 2-2v-5a2 2 0 0 1 2-2 2 2 0 0 0 0-4 2 2 0 0 1-2-2z" />
+              <path d="M4 7h3a1 1 0 0 0 1-1V5a2 2 0 0 1 4 0v1a1 1 0 0 0 1 1h3a1 1 0 0 1 1 1v3a1 1 0 0 0 1 1h1a2 2 0 0 1 0 4h-1a1 1 0 0 0-1 1v3a1 1 0 0 1-1 1h-3a1 1 0 0 1-1-1v-1a2 2 0 0 0-4 0v1a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-3a1 1 0 0 1 1-1h1a2 2 0 0 0 0-4H4a1 1 0 0 1-1-1V8a1 1 0 0 1 1-1z" />
             </svg>
           </span>
           <span v-if="!siderCollapsed" class="nav-label">{{ t('nav.plugins') }}</span>

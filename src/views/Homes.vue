@@ -63,11 +63,25 @@ function onViewProfiles(homeId: string) {
   void router.push({ path: '/profiles', query: { homeId } })
 }
 
+const dirBusyId = ref<string | null>(null)
+
+async function onOpenHomeDir(homeId: string) {
+  dirBusyId.value = homeId
+  try {
+    const path = await api.openHomeDirectory(homeId)
+    Message.success(t('homes.dirOpened', { path }))
+  } catch (e) {
+    Message.error(String(e))
+  } finally {
+    dirBusyId.value = null
+  }
+}
+
 const homeColumns = computed(() => [
   { title: t('homes.homeName'), dataIndex: 'name', width: 170 },
   { title: t('homes.homePath'), dataIndex: 'path', ellipsis: true, tooltip: true },
   { title: t('homes.homeUsedBy'), slotName: 'usedBy', width: 140 },
-  { title: t('instances.table.actions'), slotName: 'actions', width: 160, align: 'right' as const },
+  { title: t('instances.table.actions'), slotName: 'actions', width: 250, align: 'right' as const },
 ])
 </script>
 
@@ -120,6 +134,13 @@ const homeColumns = computed(() => [
         </template>
         <template #actions="{ record }">
           <div class="action-cell-btns">
+            <button
+              class="mac-action-pill"
+              :disabled="dirBusyId === record.id"
+              @click="onOpenHomeDir(record.id)"
+            >
+              {{ t('homes.openDir') }}
+            </button>
             <button
               class="mac-action-pill"
               @click="onViewProfiles(record.id)"

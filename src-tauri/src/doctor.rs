@@ -64,6 +64,61 @@ fn cli_core_version(version_dir: &Path) -> Option<String> {
     .or_else(|| package_version(&version_dir.join("apps").join("cli")))
 }
 
+/// Checks if a package name is a DSH/Cordis core runtime package.
+/// Utility libraries (cosmokit, schemastery, etc.) are independent libraries
+/// commonly imported by plugins and do not participate in DSH singleton/scheduler state.
+fn is_core_package(name: &str) -> bool {
+    let short = name.strip_prefix("@deepseek-ai/").unwrap_or(name);
+    short == "dsh"
+        || short.starts_with("dsh-")
+        || short == "cordis"
+        || short.starts_with("cordis-")
+}
+
+/// Version of a package inside the CLI's dependency tree.
+fn cli_package_version(version_dir: &Path, pkg_name: &str) -> Option<String> {
+    let short = pkg_name.strip_prefix("@deepseek-ai/").unwrap_or(pkg_name);
+
+    // 1. Direct path in node_modules/@deepseek-ai/<name>
+    if let Some(v) = package_version(&version_dir.join("node_modules").join("@deepseek-ai").join(short)) {
+        return Some(v);
+    }
+
+    // 2. Monorepo source checkout: packages/<name> or apps/<name>
+    if let Some(v) = package_version(&version_dir.join("packages").join(short)) {
+        return Some(v);
+    }
+    if let Some(v) = package_version(&version_dir.join("apps").join(short)) {
+        return Some(v);
+    }
+
+    // 3. pnpm virtual store: node_modules/.pnpm/@deepseek-ai+<short>@<version>...
+    let pnpm_dir = version_dir.join("node_modules").join(".pnpm");
+    if let Ok(entries) = std::fs::read_dir(&pnpm_dir) {
+        let prefix = format!("@deepseek-ai+{short}@");
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.starts_with(&prefix) {
+                let pkg_path = entry
+                    .path()
+                    .join("node_modules")
+                    .join("@deepseek-ai")
+                    .join(short);
+                if let Some(v) = package_version(&pkg_path) {
+                    return Some(v);
+                }
+            }
+        }
+    }
+
+    // 4. Fallback for dsh / dsh-* monorepo packages that share the dsh CLI version:
+    if short == "dsh" || short.starts_with("dsh-") {
+        return cli_core_version(version_dir);
+    }
+
+    None
+}
+
 /// Every `@deepseek-ai/*` package that has a copy inside the profile's
 /// node_modules, as (package id, version) pairs. Normally empty: core comes
 /// from the CLI tree, and the launcher never adds core packages to a profile.
@@ -75,6 +130,7 @@ fn profile_core_copies(profile_dir: &Path) -> Vec<(String, Option<String>)> {
     let mut out: Vec<(String, Option<String>)> = entries
         .filter_map(|e| e.ok())
         .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
+        .filter(|e| is_core_package(&e.file_name().to_string_lossy()))
         .map(|e| {
             let name = e.file_name().to_string_lossy().to_string();
             (format!("@deepseek-ai/{name}"), package_version(&e.path()))
@@ -119,13 +175,14 @@ pub fn inspect(
     // 2. A profile must not carry core copies; a version-mismatched copy is
     //    the two-generations state and gets escalated to an error.
     for (pkg, version) in profile_core_copies(profile_dir) {
-        let mixed = match (&version, &cli_core) {
+        let cli_pkg_ver = cli_package_version(version_dir, &pkg);
+        let mixed = match (&version, &cli_pkg_ver) {
             (Some(v), Some(core)) => v != core,
             _ => false,
         };
         let shown = version.clone().unwrap_or_else(|| "未知版本".to_string());
         if mixed {
-            let core = cli_core.clone().unwrap_or_default();
+            let core = cli_pkg_ver.clone().unwrap_or_default();
             findings.push(DoctorFinding {
                 level: FindingLevel::Error,
                 code: "profile-core-mixed".to_string(),
@@ -298,6 +355,16 @@ mod tests {
         let fx = Fixture::new();
         fx.cli_core("0.1.1-rc.2");
         std::fs::create_dir_all(fx.profile_dir.join("node_modules").join("@deepseek-ai")).unwrap();
+        let report = fx.run("0.1.1-rc.2");
+        assert!(report.findings.is_empty());
+    }
+
+    #[test]
+    fn utility_libraries_in_profile_are_not_flagged() {
+        let fx = Fixture::new();
+        fx.cli_core("0.1.1-rc.2");
+        fx.profile_core("cosmokit", "1.8.3");
+        fx.profile_core("schemastery", "3.18.2");
         let report = fx.run("0.1.1-rc.2");
         assert!(report.findings.is_empty());
     }

@@ -206,16 +206,44 @@ async fn run_npm_view(pkg: &str, field: &str) -> Result<String, String> {
 }
 
 #[tauri::command]
-pub fn remove_version(state: State<'_, AppState>, id: String) -> Result<(), String> {
-    let mut cfg = state.config.lock().unwrap();
-    if cfg.instances.iter().any(|i| i.version_id == id) {
-        return Err("该版本仍被实例引用，无法删除".to_string());
-    }
-    let Some(version) = cfg.versions.iter().find(|v| v.id == id).cloned() else {
-        return Err("版本不存在".to_string());
+pub async fn remove_version(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<(), String> {
+    let (version, instance_ids) = {
+        let cfg = state.config.lock().unwrap();
+        let Some(version) = cfg.versions.iter().find(|v| v.id == id).cloned() else {
+            return Err("版本不存在".to_string());
+        };
+        let inst_ids: Vec<String> = cfg
+            .instances
+            .iter()
+            .filter(|i| i.version_id == id)
+            .map(|i| i.id.clone())
+            .collect();
+        (version, inst_ids)
     };
-    cfg.versions.retain(|v| v.id != id);
-    save_state(&state, &cfg)?;
+
+    // Stop and cascade delete associated instances
+    for inst_id in &instance_ids {
+        if state.running.lock().await.contains_key(inst_id) {
+            let _ = process::stop_instance_process(&app, &state, inst_id).await;
+        }
+    }
+
+    {
+        let mut cfg = state.config.lock().unwrap();
+        cfg.instances.retain(|i| i.version_id != id);
+        if let Some(last_id) = &cfg.settings.last_instance_id {
+            if !cfg.instances.iter().any(|i| &i.id == last_id) {
+                cfg.settings.last_instance_id = None;
+            }
+        }
+        cfg.versions.retain(|v| v.id != id);
+        save_state(&state, &cfg)?;
+    }
+
     // Best-effort removal of the install directory.
     let _ = std::fs::remove_dir_all(&version.dir);
     Ok(())
@@ -485,8 +513,8 @@ pub fn list_profiles(state: State<'_, AppState>, home_id: String) -> Result<Vec<
     Ok(out)
 }
 
-/// Creates a new profile by copying the `__temp__` template inside the
-/// given HOME. Returns the created profile name.
+/// Creates a new profile by copying the `__temp__` template from dedicated homes.
+/// Never creates or overrides `__temp__` in user default ~/.dsh/profiles (issue #5).
 #[tauri::command(rename_all = "snake_case")]
 pub fn create_profile(
     state: State<'_, AppState>,
@@ -496,26 +524,57 @@ pub fn create_profile(
     let name = name.trim().to_string();
     validate_profile_name(&name)?;
 
-    let profiles_dir = {
+    let (home_path, is_user_default) = {
         let cfg = state.config.lock().unwrap();
         let home = cfg
             .homes
             .iter()
             .find(|h| h.id == home_id)
             .ok_or_else(|| "DSH_HOME 不存在".to_string())?;
-        home.path.join("profiles")
+        let is_user_default = home.id == "home-user-dsh"
+            || std::env::var("HOME")
+                .map(|h| home.path == std::path::PathBuf::from(h).join(".dsh"))
+                .unwrap_or(false);
+        (home.path.clone(), is_user_default)
     };
+    let profiles_dir = home_path.join("profiles");
 
-    let temp_dir = profiles_dir.join("__temp__");
-    if !temp_dir.is_dir() {
-        return Err("模板 __temp__ 不存在，请先创建实例以生成模板".to_string());
-    }
     let target = profiles_dir.join(&name);
     if target.exists() {
         return Err(format!("Profile「{name}」已存在"));
     }
 
-    copy_dir_recursive(&temp_dir, &target).map_err(|e| format!("创建 Profile 失败: {e}"))?;
+    // Locate __temp__ template strictly from dedicated homes:
+    // Never create or overwrite __temp__ in ~/.dsh/profiles.
+    let template_path = if !is_user_default && profiles_dir.join("__temp__").is_dir() {
+        profiles_dir.join("__temp__")
+    } else if !is_user_default && profiles_dir.join("web").is_dir() {
+        let temp_dir = profiles_dir.join("__temp__");
+        copy_dir_recursive(&profiles_dir.join("web"), &temp_dir)
+            .map_err(|e| format!("初始化模板失败: {e}"))?;
+        crate::tasks::scrub_profile_port_pin(&temp_dir);
+        temp_dir
+    } else {
+        // Look in launcher's dedicated homes (<data_dir>/homes/*/profiles/__temp__):
+        let homes_root = state.data_dir.join("homes");
+        let mut found = None;
+        if let Ok(entries) = std::fs::read_dir(&homes_root) {
+            for entry in entries.flatten() {
+                let candidate = entry.path().join("profiles").join("__temp__");
+                if candidate.is_dir() {
+                    found = Some(candidate);
+                    break;
+                }
+            }
+        }
+        found.ok_or_else(|| "未找到可用的 Profile __temp__ 模板，请先安装至少一个 DSH 版本".to_string())?
+    };
+
+    if !profiles_dir.is_dir() {
+        std::fs::create_dir_all(&profiles_dir).map_err(|e| format!("创建 profiles 目录失败: {e}"))?;
+    }
+
+    copy_dir_recursive(&template_path, &target).map_err(|e| format!("创建 Profile 失败: {e}"))?;
     Ok(name)
 }
 
@@ -1181,6 +1240,28 @@ pub fn open_instance_directory(
         instance_id,
         home.display()
     );
+    open::that(&home).map_err(|e| format!("打开目录失败: {e}"))?;
+    Ok(home.to_string_lossy().to_string())
+}
+
+/// Opens a DSH_HOME directory in the file manager.
+#[tauri::command]
+pub fn open_home_directory(
+    state: State<'_, AppState>,
+    home_id: String,
+) -> Result<String, String> {
+    let home = {
+        let cfg = state.config.lock().unwrap();
+        cfg.homes
+            .iter()
+            .find(|h| h.id == home_id)
+            .map(|h| h.path.clone())
+            .ok_or_else(|| "DSH_HOME 不存在".to_string())?
+    };
+    if !home.is_dir() {
+        std::fs::create_dir_all(&home).map_err(|e| format!("创建目录失败: {e}"))?;
+    }
+    crate::log_info!("在文件管理器中打开 DSH_HOME {}", home.display());
     open::that(&home).map_err(|e| format!("打开目录失败: {e}"))?;
     Ok(home.to_string_lossy().to_string())
 }

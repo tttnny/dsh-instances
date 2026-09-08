@@ -5,7 +5,7 @@ const router = createRouter({
   history: createWebHashHistory(),
   routes: [
     { path: '/', name: 'home', component: () => import('@/views/Home.vue') },
-    { path: '/instances', name: 'instances', component: () => import('@/views/Instances.vue') },
+    { path: '/instances', redirect: '/' },
     { path: '/instances/:id', name: 'instance-edit', component: () => import('@/views/InstanceEdit.vue') },
     { path: '/homes', name: 'homes', component: () => import('@/views/Homes.vue') },
     { path: '/profiles', name: 'profiles', component: () => import('@/views/Profiles.vue') },

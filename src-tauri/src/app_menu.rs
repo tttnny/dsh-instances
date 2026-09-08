@@ -49,7 +49,6 @@ use tauri::{AppHandle, Emitter, Manager};
 const ID_PREFERENCES: &str = "appmenu-preferences";
 const ID_QUIT: &str = "appmenu-quit";
 const ID_VIEW_HOME: &str = "appmenu-view-home";
-const ID_VIEW_INSTANCES: &str = "appmenu-view-instances";
 const ID_VIEW_HOMES: &str = "appmenu-view-homes";
 const ID_VIEW_PROFILES: &str = "appmenu-view-profiles";
 const ID_VIEW_PLUGINS: &str = "appmenu-view-plugins";
@@ -130,36 +129,29 @@ pub fn build_app_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
 
     // ── 显示 (应用内导航快捷键→转发前端) ──────────────────
     let view_home = MenuItem::with_id(app, ID_VIEW_HOME, "首页", true, Some("CmdOrCtrl+1"))?;
-    let view_instances = MenuItem::with_id(
-        app,
-        ID_VIEW_INSTANCES,
-        "实例管理",
-        true,
-        Some("CmdOrCtrl+2"),
-    )?;
-    let view_homes = MenuItem::with_id(app, ID_VIEW_HOMES, "HOME", true, Some("CmdOrCtrl+3"))?;
+    let view_homes = MenuItem::with_id(app, ID_VIEW_HOMES, "HOME", true, Some("CmdOrCtrl+2"))?;
     let view_profiles = MenuItem::with_id(
         app,
         ID_VIEW_PROFILES,
         "Profile",
         true,
-        Some("CmdOrCtrl+4"),
+        Some("CmdOrCtrl+3"),
     )?;
     let view_plugins = MenuItem::with_id(
         app,
         ID_VIEW_PLUGINS,
         "插件",
         true,
-        Some("CmdOrCtrl+5"),
+        Some("CmdOrCtrl+4"),
     )?;
     let view_versions = MenuItem::with_id(
         app,
         ID_VIEW_VERSIONS,
         "版本",
         true,
-        Some("CmdOrCtrl+6"),
+        Some("CmdOrCtrl+5"),
     )?;
-    let view_tasks = MenuItem::with_id(app, ID_VIEW_TASKS, "任务", true, Some("CmdOrCtrl+7"))?;
+    let view_tasks = MenuItem::with_id(app, ID_VIEW_TASKS, "任务", true, Some("CmdOrCtrl+6"))?;
     // “设置”不重复占用 Cmd+,，加速键归偏好设置独占。
     let view_settings = MenuItem::with_id(app, ID_VIEW_SETTINGS, "设置", true, None::<&str>)?;
     let sep_v = PredefinedMenuItem::separator(app)?;
@@ -169,7 +161,6 @@ pub fn build_app_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         true,
         &[
             &view_home,
-            &view_instances,
             &view_homes,
             &view_profiles,
             &view_plugins,
@@ -243,7 +234,6 @@ pub fn handle_menu_event(app: &AppHandle, event: tauri::menu::MenuEvent) {
     match event.id().as_ref() {
         ID_SHOW_MAIN => crate::windows::show_or_create_main(app),
         ID_VIEW_HOME => show_and_emit(app, "/"),
-        ID_VIEW_INSTANCES => show_and_emit(app, "/instances"),
         ID_VIEW_HOMES => show_and_emit(app, "/homes"),
         ID_VIEW_PROFILES => show_and_emit(app, "/profiles"),
         ID_VIEW_PLUGINS => show_and_emit(app, "/plugins"),
