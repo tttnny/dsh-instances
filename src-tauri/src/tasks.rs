@@ -68,6 +68,36 @@ fn now_millis() -> i64 {
         .unwrap_or(0)
 }
 
+/// Whether a version string is safe to use as a path segment under
+/// `versions/`: npm semver plus the alpha tags upstream publishes. Rejects
+/// path separators, `..`, and anything exotic before the string is ever
+/// joined into a filesystem path (the Tauri command boundary and GitHub tag
+/// names are both untrusted input — a Git tag may legally contain `/`).
+pub(crate) fn valid_version_string(v: &str) -> bool {
+    // `.`/`..` are charset-legal but are exactly the path-traversal segments.
+    !v.is_empty()
+        && v != "."
+        && v != ".."
+        && v.len() <= 64
+        && v.chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '+' | '_'))
+}
+
+/// Whether the task is still allowed to do work (Running or Queued). Checked
+/// at stage boundaries so a task cancelled during a phase without a
+/// registered child (npm probing, pnpm bootstrap, profile boot) stops instead
+/// of silently creating the HOME/instance records afterwards.
+pub(crate) async fn task_is_running(
+    state: &State<'_, AppState>,
+    task_id: &str,
+) -> bool {
+    let tasks = state.tasks.lock().await;
+    tasks
+        .get(task_id)
+        .map(|t| matches!(t.state, TaskState::Running | TaskState::Queued))
+        .unwrap_or(false)
+}
+
 // ---------------------------------------------------------------------------
 // Commands
 // ---------------------------------------------------------------------------
@@ -103,6 +133,9 @@ pub async fn start_create_instance_task(
     if version.is_empty() {
         return Err("版本号不能为空".to_string());
     }
+    if !valid_version_string(&version) {
+        return Err(format!("版本号格式不合法: {version}"));
+    }
 
     // Dedicated HOME: reserve the path now (placeholder) but do NOT create the
     // HOME record yet — it is created only once the instance is actually made,
@@ -132,15 +165,27 @@ pub async fn start_create_instance_task(
             }
         }
     }
-    // Reject a running/pending task that will create the same instance name
-    // once it finishes (prevents duplicate name submissions).
-    // Also reject two running tasks reserving the same dedicated HOME path.
-    {
-        let tasks = state.tasks.lock().await;
+    let task_label = if name == version {
+        format!("下载 DSH {version} 并创建实例")
+    } else {
+        format!("下载 DSH {version} 并创建实例「{name}」")
+    };
+
+    // Deduplicate and insert under one lock scope so two concurrent submissions
+    // can never both pass the checks (TOCTOU). A running create-instance task
+    // for the same version must also be rejected: the version record is only
+    // registered when its install finishes, so two installs of the same
+    // version would otherwise run `pnpm install --prefix` into the same
+    // directory concurrently and corrupt the tree.
+    let task_id = {
+        let mut tasks = state.tasks.lock().await;
         for task in tasks.values() {
-            if task.state == TaskState::Running {
+            if task.state == TaskState::Running || task.state == TaskState::Queued {
                 if task.instance_name.as_deref() == Some(name.as_str()) {
                     return Err("同名实例的下载任务已在进行中".to_string());
+                }
+                if task.kind == "create-instance" && task.version == version {
+                    return Err(format!("版本 {version} 的下载任务已在进行中"));
                 }
                 if let (Some(a), Some(b)) = (&task.reserved_home_path, &reserved_home_path) {
                     if crate::config::paths_equal(a, b) {
@@ -149,31 +194,25 @@ pub async fn start_create_instance_task(
                 }
             }
         }
-    }
-
-    let task_label = if name == version {
-        format!("下载 DSH {version} 并创建实例")
-    } else {
-        format!("下载 DSH {version} 并创建实例「{name}」")
+        let task = TaskInfo {
+            id: new_id("t"),
+            kind: "create-instance".to_string(),
+            label: task_label,
+            version: version.clone(),
+            state: TaskState::Running,
+            percent: 0,
+            created_at: now_millis(),
+            message: None,
+            instance_id: None,
+            instance_name: Some(name.clone()),
+            reserved_home_path,
+            logs: Vec::new(),
+            child: None,
+        };
+        let id = task.id.clone();
+        tasks.insert(id.clone(), task);
+        id
     };
-
-    let task = TaskInfo {
-        id: new_id("t"),
-        kind: "create-instance".to_string(),
-        label: task_label,
-        version: version.clone(),
-        state: TaskState::Running,
-        percent: 0,
-        created_at: now_millis(),
-        message: None,
-        instance_id: None,
-        instance_name: Some(name.clone()),
-        reserved_home_path,
-        logs: Vec::new(),
-        child: None,
-    };
-    let task_id = task.id.clone();
-    state.tasks.lock().await.insert(task_id.clone(), task);
     emit_progress(&app, &task_id, TaskState::Running, 0, None, None);
 
     let worker_app = app.clone();
@@ -329,8 +368,20 @@ async fn do_create_instance(
     };
     let version_record = match version_record {
         Some(v) => v,
-        None => install_version_streamed(app, state, task_id, version).await?,
+        None => {
+            if !task_is_running(state, task_id).await {
+                return Err("任务已取消".to_string());
+            }
+            install_version_streamed(app, state, task_id, version).await?
+        }
     };
+
+    // Cancellation during a stage without a registered child (npm probing,
+    // pnpm bootstrap) must not fall through into record creation: the task
+    // would stay "cancelled" while the instance silently appears.
+    if !task_is_running(state, task_id).await {
+        return Err("任务已取消".to_string());
+    }
 
     // 2. Resolve the actual DSH_HOME: for a dedicated task, create the HOME
     //    record now (path-based reuse keeps it idempotent); otherwise the
@@ -682,23 +733,54 @@ async fn install_version_streamed(
     // launcher's data dir via npm.
     let pnpm_prog = ensure_pnpm(app, state, task_id).await?;
 
-    // pnpm 11 blocks dependency build scripts unless every package with an
-    // install script is listed under `allowBuilds`. On the first attempt it
-    // writes a `set this to true or false` placeholder into
-    // pnpm-workspace.yaml and fails with ERR_PNPM_IGNORED_BUILDS; we convert
-    // that placeholder to `true` and retry once so native deps (node-pty,
-    // koffi, …) actually build.
-    for attempt in 1..=2 {
-        let mut cmd = tokio::process::Command::new(&pnpm_prog);
+    let install_result = install_via_pnpm(app, state, task_id, &dir, &store_dir, &pnpm_prog, version).await;
+    if install_result.is_err() {
+        // A half-installed tree (plus the allowBuilds workspace manifest this
+        // path writes) makes a retry's semantics unclear and wastes disk —
+        // clear it so the next attempt starts clean. This version is not
+        // registered, so nothing can reference the directory yet.
+        if let Err(e) = std::fs::remove_dir_all(&dir) {
+            crate::log_warn!("清理失败的版本目录 {} 失败: {e}", dir.display());
+        } else {
+            push_task_log(app, state, task_id, "已清理未完成的版本目录").await;
+        }
+    }
+    install_result?;
+
+    register_version(state, version, dir)
+}
+
+/// The pnpm install + native-build completion phase of an npm version
+/// install. Split out of `install_version_streamed` so its failure cleanup
+/// covers every error path uniformly.
+async fn install_via_pnpm(
+    app: &AppHandle,
+    state: &State<'_, AppState>,
+    task_id: &str,
+    dir: &std::path::Path,
+    store_dir: &std::path::Path,
+    pnpm_prog: &std::path::Path,
+    version: &str,
+) -> Result<(), String> {
+    // Attempt plan: a failed install retries automatically (transient network
+    // errors are common on a ~600-package tree). Before the final attempt the
+    // pnpm content store and the version dir are wiped: the store is a pure
+    // cache, and one interrupted download can leave corrupted entries in it
+    // that fail EVERY later install with integrity errors — a clean slate is
+    // the only reliable recovery for that state.
+    const MAX_ATTEMPTS: u32 = 3;
+    let mut attempt: u32 = 1;
+    loop {
+        let mut cmd = tokio::process::Command::new(pnpm_prog);
         crate::process::hide_console(&mut cmd);
         // Network robustness: the default fetch timeout (60s) and retries (2)
         // are too tight for large native binaries (e.g. sharp-win32-x64),
         // which fail with "error (23) ... aborted due to timeout" on flaky
         // connections.
         cmd.args(["install", "--prefix"])
-            .arg(&dir)
+            .arg(dir)
             .arg("--store-dir")
-            .arg(&store_dir)
+            .arg(store_dir)
             .args(["--loglevel=http"])
             .args([
                 "--fetch-timeout",
@@ -725,23 +807,63 @@ async fn install_version_streamed(
 
         match run_streamed_command(app, state, task_id, cmd, "pnpm install").await {
             Ok(()) => break,
-            Err(_e) if attempt == 1 && task_log_mentions_ignored_builds(state, task_id) => {
-                push_task_log(
-                    app,
-                    state,
-                    task_id,
-                    "pnpm 11 拦截了构建脚本，正在批准 allowBuilds 后重试…",
-                )
-                .await;
-                crate::plugins::ensure_build_scripts_allowed(&dir)?;
+            Err(e) => {
+                // pnpm 11 blocks dependency build scripts unless every package
+                // with an install script is listed under `allowBuilds`. On the
+                // first attempt it writes a `set this to true or false`
+                // placeholder into pnpm-workspace.yaml and fails with
+                // ERR_PNPM_IGNORED_BUILDS; convert that placeholder to `true`
+                // and retry once so native deps (node-pty, koffi, …) build.
+                if attempt == 1 && task_log_mentions_ignored_builds(state, task_id) {
+                    push_task_log(
+                        app,
+                        state,
+                        task_id,
+                        "pnpm 11 拦截了构建脚本，正在批准 allowBuilds 后重试…",
+                    )
+                    .await;
+                    crate::plugins::ensure_build_scripts_allowed(dir)?;
+                    continue;
+                }
+                if attempt >= MAX_ATTEMPTS {
+                    return Err(e);
+                }
+                if !task_is_running(state, task_id).await {
+                    return Err("任务已取消".to_string());
+                }
+                if attempt + 1 == MAX_ATTEMPTS {
+                    push_task_log(
+                        app,
+                        state,
+                        task_id,
+                        "清空 pnpm 缓存存储与版本目录后进行最后一次重试…",
+                    )
+                    .await;
+                    if let Err(e) = std::fs::remove_dir_all(store_dir) {
+                        crate::log_warn!("清理 pnpm store 失败: {e}");
+                    }
+                    if let Err(e) = std::fs::remove_dir_all(dir) {
+                        crate::log_warn!("清理版本目录失败: {e}");
+                    }
+                    std::fs::create_dir_all(dir)
+                        .map_err(|e| format!("创建版本目录失败: {e}"))?;
+                    crate::plugins::ensure_build_scripts_allowed(dir)?;
+                } else {
+                    push_task_log(
+                        app,
+                        state,
+                        task_id,
+                        &format!("安装失败，正在重试（第 {attempt} 次重试）…"),
+                    )
+                    .await;
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                attempt += 1;
             }
-            Err(e) => return Err(e),
         }
     }
 
-    ensure_pending_builds(app, state, task_id, &dir, &pnpm_prog).await?;
-
-    register_version(state, version, dir)
+    ensure_pending_builds(app, state, task_id, dir, pnpm_prog).await
 }
 
 /// Runs `pnpm rebuild` when the finished install still lists packages in
@@ -813,6 +935,7 @@ fn register_version(
 async fn npm_has_version(version: &str) -> bool {
     let mut cmd = tokio::process::Command::new(crate::process::npm());
     crate::process::hide_console(&mut cmd);
+    crate::proxy::apply_to_command(&mut cmd);
     cmd.args(["view", &format!("@deepseek-ai/dsh@{version}"), "version"]);
     if let Ok(registry) = std::env::var("DSH_NPM_REGISTRY") {
         let registry = registry.trim().to_string();
@@ -837,6 +960,11 @@ async fn github_tag_exists(version: &str) -> Result<bool, String> {
     match crate::plugins::fetch_json_pub(&url, 256 * 1024).await {
         Ok(_) => Ok(true),
         Err(e) if e.contains("HTTP 404") => Ok(false),
+        // Anonymous GitHub API quota is small; a 403/429 here is rate
+        // limiting, and surfacing that plainly beats a cryptic HTTP error.
+        Err(e) if e.contains("HTTP 403") || e.contains("HTTP 429") => Err(format!(
+            "GitHub API 请求被限流，无法确认版本 {version} 是否存在；请稍后重试{e}"
+        )),
         Err(e) => Err(e),
     }
 }
@@ -952,39 +1080,27 @@ async fn install_version_from_repo(
 
 /// Packages pnpm recorded under `pendingBuilds` in `node_modules/.modules.yaml`
 /// — dependencies whose build scripts did not run. The file is JSON-flavored
-/// YAML; parse line-wise so a missing or odd file just means "nothing pending".
+/// YAML (pnpm 11 writes `"pendingBuilds": []` inline on one line), so it is
+/// deserialized instead of scanned line-wise: the old line scanner kept
+/// reading past an emptied inline list and mistook the keys below it
+/// (`publicHoistPattern`, `registries`, …) for package names, failing healthy
+/// installs. A missing or unparsable file still means "nothing pending".
 fn pending_builds(dir: &std::path::Path) -> Vec<String> {
     let Ok(raw) = std::fs::read_to_string(dir.join("node_modules").join(".modules.yaml")) else {
         return Vec::new();
     };
-    let mut lines = raw.lines().map(str::trim);
-    while let Some(line) = lines.next() {
-        if !line.starts_with("\"pendingBuilds\"") && !line.starts_with("pendingBuilds:") {
-            continue;
-        }
-        let mut pkgs = Vec::new();
-        for entry in lines.by_ref() {
-            let trimmed = entry.trim();
-            if trimmed.starts_with(']') {
-                break;
-            }
-            if trimmed.is_empty() {
-                continue;
-            }
-            let Some(item) = trimmed
-                .strip_prefix("- ")
-                .or_else(|| trimmed.strip_prefix('"'))
-                .map(|s| s.trim_end_matches(',').trim_end_matches('"').trim())
-            else {
-                break; // a different top-level key — the list ended
-            };
-            if !item.is_empty() {
-                pkgs.push(item.to_string());
-            }
-        }
-        return pkgs;
+    parse_pending_builds(&raw)
+}
+
+fn parse_pending_builds(raw: &str) -> Vec<String> {
+    #[derive(Default, serde::Deserialize)]
+    struct ModulesYaml {
+        #[serde(rename = "pendingBuilds", default)]
+        pending_builds: Vec<String>,
     }
-    Vec::new()
+    serde_yaml::from_str::<ModulesYaml>(raw)
+        .map(|m| m.pending_builds)
+        .unwrap_or_default()
 }
 
 /// Whether the task's streamed log mentions pnpm's ignored-build-scripts
@@ -1089,16 +1205,18 @@ async fn ensure_pnpm(
     emit_log(app, task_id, &msg);
     crate::log_info!("引导安装 {spec} 到 {}", tools_dir.display());
 
-    let child = crate::process::hide_console(
-        tokio::process::Command::new(crate::process::npm())
-            .args(["install", "--global", "--prefix"])
-            .arg(&tools_dir)
-            .arg(&spec)
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped()),
-    )
-    .spawn()
-    .map_err(|e| format!("pnpm 安装启动失败: {e}"))?;
+    let mut child_cmd = tokio::process::Command::new(crate::process::npm());
+    crate::process::hide_console(&mut child_cmd);
+    crate::proxy::apply_to_command(&mut child_cmd);
+    child_cmd
+        .args(["install", "--global", "--prefix"])
+        .arg(&tools_dir)
+        .arg(&spec)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    let child = child_cmd
+        .spawn()
+        .map_err(|e| format!("pnpm 安装启动失败: {e}"))?;
     let output = child
         .wait_with_output()
         .await
@@ -1286,6 +1404,17 @@ pub(crate) async fn run_streamed_command(
     push_task_log_pub(app, state, task_id, &format!("$ {cmdline}")).await;
     crate::log_debug!("run_streamed_command[{what}]: {cmdline}");
 
+    // The launcher's proxy must apply to the children it spawns (pnpm, git),
+    // not just its own reqwest requests.
+    crate::proxy::apply_to_command(&mut cmd);
+
+    // Capture output centrally: callers build bare commands, and a child
+    // without piped stdio prints its errors straight into the GUI process's
+    // inherited stdout where nobody sees them — the task log then holds
+    // nothing but the echoed command line.
+    cmd.stdout(std::process::Stdio::piped());
+    cmd.stderr(std::process::Stdio::piped());
+
     let mut child = cmd
         .spawn()
         .map_err(|e| format!("{what} 启动失败: {e}（请确认已安装 Node.js 与 pnpm）"))?;
@@ -1452,5 +1581,59 @@ mod tests {
         // DSH profiles are initialized by pnpm 11; changing this constant
         // means the launcher drives installs with a different major.
         assert_eq!(REQUIRED_PNPM_MAJOR, 11);
+    }
+
+    #[test]
+    fn valid_version_string_accepts_semver_shapes() {
+        assert!(valid_version_string("1.2.3"));
+        assert!(valid_version_string("0.1.3-alpha.2"));
+        assert!(valid_version_string("0.2.0-rc.8+build.1"));
+        assert!(valid_version_string("22.14.0"));
+    }
+
+    #[test]
+    fn valid_version_string_rejects_path_segments() {
+        // Path traversal and separators must never reach a path join.
+        assert!(!valid_version_string(""));
+        assert!(!valid_version_string(".."));
+        assert!(!valid_version_string("../evil"));
+        assert!(!valid_version_string("a/b"));
+        assert!(!valid_version_string("a\\b"));
+        assert!(!valid_version_string("v1.2.3\n"));
+        assert!(!valid_version_string("1.2.3 "));
+        // GitHub tag names may contain slashes; the installer must refuse them.
+        assert!(!valid_version_string("../../evil"));
+        // Overlong garbage is rejected too.
+        assert!(!valid_version_string(&"1".repeat(65)));
+    }
+
+    #[test]
+    fn pending_builds_empty_inline_list_is_not_confused_by_following_keys() {
+        // Regression: pnpm 11 writes `"pendingBuilds": []` inline; the keys
+        // below it (publicHoistPattern, registries, …) are not packages.
+        let raw = r#"{
+  "pendingBuilds": [],
+  "publicHoistPattern": [],
+  "registries": {
+    "default": "https://registry.npmjs.org/"
+  }
+}"#;
+        assert!(parse_pending_builds(raw).is_empty());
+    }
+
+    #[test]
+    fn pending_builds_reads_populated_block_list() {
+        let raw = "pendingBuilds:\n  - koffi@3.2.1\n  - protobufjs@7.6.6\npublicHoistPattern: []\n";
+        assert_eq!(
+            parse_pending_builds(raw),
+            vec!["koffi@3.2.1".to_string(), "protobufjs@7.6.6".to_string()]
+        );
+    }
+
+    #[test]
+    fn pending_builds_missing_or_garbage_means_nothing_pending() {
+        assert!(parse_pending_builds("").is_empty());
+        assert!(parse_pending_builds("not yaml: [unclosed").is_empty());
+        assert!(parse_pending_builds("{\"other\": 1}").is_empty());
     }
 }
