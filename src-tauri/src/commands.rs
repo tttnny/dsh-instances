@@ -174,7 +174,11 @@ async fn fetch_github_tag_versions() -> Result<Vec<RemoteVersion>, String> {
         let Some(version) = tag.strip_prefix("dsh-v") else {
             continue;
         };
-        if version.is_empty() {
+        // A Git tag may legally contain `/`, `..`, and other characters that
+        // are unsafe as the version-directory path segment the installer
+        // joins it into — only accept well-formed version strings.
+        if !crate::tasks::valid_version_string(version) {
+            crate::log_warn!("忽略格式异常的 GitHub 标签: {tag}");
             continue;
         }
         out.push(RemoteVersion {
@@ -191,7 +195,18 @@ async fn fetch_github_tag_versions() -> Result<Vec<RemoteVersion>, String> {
 
 async fn run_npm_view(pkg: &str, field: &str) -> Result<String, String> {
     let mut cmd = tokio::process::Command::new(process::npm());
+    // Keep the listing consistent with the installer's npm probe: both honor
+    // the DSH_NPM_REGISTRY mirror, so a mirror user doesn't see official-
+    // registry data in the list but mirror data at install time (or vice
+    // versa when the mirror lags).
+    crate::proxy::apply_to_command(&mut cmd);
     cmd.args(["view", pkg, field, "--json"]);
+    if let Ok(registry) = std::env::var("DSH_NPM_REGISTRY") {
+        let registry = registry.trim().to_string();
+        if !registry.is_empty() {
+            cmd.args(["--registry", &registry]);
+        }
+    }
     let output = crate::process::hide_console(&mut cmd)
         .output()
         .await

@@ -448,6 +448,12 @@ pub async fn start_install_node_task(
         let result = do_install_node(&worker_app, &state, &worker_task_id).await;
         let mut tasks = state.tasks.lock().await;
         if let Some(task) = tasks.get_mut(&worker_task_id) {
+            // A cancelled task stays cancelled: don't flip it to Done/Error
+            // when the worker finishes anyway (mirrors the create-instance
+            // path).
+            if task.state == crate::tasks::TaskState::Cancelled {
+                return;
+            }
             match result {
                 Ok(version) => {
                     task.state = crate::tasks::TaskState::Done;
@@ -491,6 +497,11 @@ async fn do_install_node(
 ) -> Result<String, String> {
     crate::tasks::push_task_log_pub(app, state, task_id, "正在查询 Node.js 最新 LTS 版本…").await;
     let version = resolve_node_version().await?;
+    // Cancellation during version resolution (no child to kill) must stop the
+    // task here: the extraction below replaces any existing managed runtime.
+    if !crate::tasks::task_is_running(state, task_id).await {
+        return Err("任务已取消".to_string());
+    }
     {
         let mut tasks = state.tasks.lock().await;
         if let Some(task) = tasks.get_mut(task_id) {
@@ -503,6 +514,13 @@ async fn do_install_node(
     std::fs::create_dir_all(&tools).map_err(|e| format!("创建工具目录失败: {e}"))?;
     let archive = tools.join(node_archive_name(&version));
     download_node_archive(app, state, task_id, &version, &archive).await?;
+
+    // A cancel during the download killed the HTTP stream but may leave this
+    // worker running; check before the destructive extraction step.
+    if !crate::tasks::task_is_running(state, task_id).await {
+        std::fs::remove_file(&archive).ok();
+        return Err("任务已取消".to_string());
+    }
 
     crate::tasks::emit_progress_pub(
         app,
@@ -536,6 +554,9 @@ async fn do_install_node(
 
     // npm ships with Node; bootstrap the pinned pnpm so the whole
     // environment goes green in one click.
+    if !crate::tasks::task_is_running(state, task_id).await {
+        return Err("任务已取消".to_string());
+    }
     crate::tasks::emit_progress_pub(
         app,
         task_id,

@@ -78,3 +78,22 @@ pub fn override_env(env: &mut Vec<(String, String)>, settings: &LauncherSettings
     env.push(("NO_PROXY".to_string(), conf.no_proxy.clone()));
     env.push(("no_proxy".to_string(), conf.no_proxy));
 }
+
+/// Applies the configured proxy (if enabled) to a child command's
+/// environment, so network-heavy children spawned by the launcher (npm view,
+/// pnpm install, git clone, npm install -g) follow the same proxy as its own
+/// reqwest requests. Without this, a proxy user gets a working version list
+/// (reqwest is proxied) but direct-connect installs that fail opaquely.
+/// Mirrors the `proxy_enabled` settings toggle: when disabled, the inherited
+/// environment is left untouched.
+pub fn apply_to_command(cmd: &mut tokio::process::Command) {
+    let guard = CURRENT.read().unwrap();
+    let Some(conf) = guard.as_ref() else {
+        return;
+    };
+    for key in ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"] {
+        cmd.env(key, &conf.server);
+    }
+    cmd.env("NO_PROXY", &conf.no_proxy);
+    cmd.env("no_proxy", &conf.no_proxy);
+}
