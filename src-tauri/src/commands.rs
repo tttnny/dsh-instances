@@ -1121,10 +1121,28 @@ pub fn open_instance_terminal(
             Err(e) => Err(format!("打开 Ghostty 失败: {e}")),
         }
     } else {
-        // Terminal.app: activate brings Terminal to the foreground, do script runs the launcher script.
+        // Terminal.app. A cold-started Terminal always opens a default
+        // startup window, so `activate` + `do script` would produce two
+        // windows. Instead, on cold start we wait for that startup window
+        // and run the script inside it.
         let escaped_path = term_script.to_string_lossy().replace('\\', "\\\\").replace('"', "\\\"");
         let script = format!(
-            "tell application \"Terminal\"\n    activate\n    do script \"exec \\\"{escaped_path}\\\"\"\nend tell"
+            "tell application \"Terminal\"\n\
+            set wasRunning to running\n\
+            if not wasRunning then\n\
+            activate\n\
+            repeat 20 times\n\
+            if (count of windows) > 0 then exit repeat\n\
+            delay 0.1\n\
+            end repeat\n\
+            if (count of windows) > 0 then\n\
+            do script \"exec \\\"{escaped_path}\\\"\" in tab 1 of front window\n\
+            return\n\
+            end if\n\
+            end if\n\
+            do script \"exec \\\"{escaped_path}\\\"\"\n\
+            activate\n\
+            end tell"
         );
         let out = std::process::Command::new("osascript")
             .arg("-e")
@@ -1150,6 +1168,72 @@ fn shell_program() -> String {
 /// Single-quote a value for sh -c / do-script embedding.
 fn shell_quote(v: &str) -> String {
     format!("'{}'", v.replace('\'', "'\\''"))
+}
+
+/// Opens a folder in the system file manager. On macOS this reuses an
+/// existing Finder tab that already shows the folder (bringing its window
+/// to front and selecting that tab); otherwise it opens a new tab in the
+/// frontmost window. Creating a tab requires synthetic keystrokes, so when
+/// the accessibility permission is missing it falls back to a new window.
+fn open_folder_in_file_manager(dir: &std::path::Path) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        // Canonicalize so the comparison matches Finder's POSIX path
+        // (resolves /tmp -> /private/tmp and other symlinks).
+        let canon = dir
+            .canonicalize()
+            .unwrap_or_else(|_| dir.to_path_buf());
+        let posix = format!("{}/", canon.to_string_lossy().trim_end_matches('/'));
+        let script = r#"on run argv
+    set posixPath to item 1 of argv
+    tell application "Finder"
+        repeat with i from 1 to count of Finder windows
+            set w to Finder window i
+            try
+                if ((POSIX path of ((target of w) as alias)) as string) = posixPath then
+                    set index of w to 1
+                    set collapsed of w to false
+                    activate
+                    return "reused"
+                end if
+            end try
+        end repeat
+        activate
+        delay 0.2
+        if (count of Finder windows) is 0 then
+            make new Finder window to (POSIX file (text 1 thru -2 of posixPath))
+            return "new-window"
+        end if
+        try
+            tell application "System Events" to keystroke "t" using command down
+            delay 0.3
+            set target of front Finder window to (POSIX file (text 1 thru -2 of posixPath))
+            return "new-tab"
+        on error
+            make new Finder window to (POSIX file (text 1 thru -2 of posixPath))
+            return "new-window"
+        end try
+    end tell
+end run"#;
+        let out = std::process::Command::new("osascript")
+            .arg("-e")
+            .arg(script)
+            .arg("--")
+            .arg(&posix)
+            .output()
+            .map_err(|e| format!("打开目录失败: {e}"))?;
+        if out.status.success() {
+            return Ok(());
+        }
+        return Err(format!(
+            "打开目录失败: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        open::that(dir).map_err(|e| format!("打开目录失败: {e}"))
+    }
 }
 
 /// Opens the file manager at a log file with the file selected (Windows
@@ -1193,7 +1277,7 @@ pub fn open_launcher_directory(state: State<'_, AppState>) -> Result<String, Str
         std::fs::create_dir_all(&dir).map_err(|e| format!("创建数据目录失败: {e}"))?;
     }
     crate::log_info!("在文件管理器中打开启动器数据目录 {}", dir.display());
-    open::that(&dir).map_err(|e| format!("打开目录失败: {e}"))?;
+    open_folder_in_file_manager(&dir)?;
     Ok(dir.to_string_lossy().to_string())
 }
 
@@ -1255,7 +1339,7 @@ pub fn open_instance_directory(
         instance_id,
         home.display()
     );
-    open::that(&home).map_err(|e| format!("打开目录失败: {e}"))?;
+    open_folder_in_file_manager(&home)?;
     Ok(home.to_string_lossy().to_string())
 }
 
@@ -1277,7 +1361,7 @@ pub fn open_home_directory(
         std::fs::create_dir_all(&home).map_err(|e| format!("创建目录失败: {e}"))?;
     }
     crate::log_info!("在文件管理器中打开 DSH_HOME {}", home.display());
-    open::that(&home).map_err(|e| format!("打开目录失败: {e}"))?;
+    open_folder_in_file_manager(&home)?;
     Ok(home.to_string_lossy().to_string())
 }
 
