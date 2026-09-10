@@ -518,14 +518,17 @@ fn run_dsh_plugin_sync(
                 crate::log_info!("pnpm 报告 store 位置不一致，重新链接后重试");
                 relink_profile_store_sync(state, target, &pnpm_prog)?;
             }
-            Err(out) => return Err(format!("{what} 失败: {out}")),
+            Err(out) => return Err(format!("{what} 失败: {}", summarize_output(&out))),
         }
     }
     unreachable!("attempt loop covers both attempts")
 }
 
-/// Runs a piped child command synchronously, returning the last meaningful
-/// output lines on failure.
+/// Runs a piped child command synchronously, returning the FULL combined
+/// output on failure: retryable-error detection (store mismatch, ignored
+/// builds) matches markers like `ERR_PNPM_UNEXPECTED_STORE` that pnpm prints
+/// at the START of its diagnostics, so callers must see the whole output.
+/// Display sites compress it through [`summarize_output`].
 fn run_command_sync(mut cmd: std::process::Command, what: &str) -> Result<(), String> {
     let out = cmd.output().map_err(|e| format!("{what} 启动失败: {e}"))?;
     if out.status.success() {
@@ -536,24 +539,22 @@ fn run_command_sync(mut cmd: std::process::Command, what: &str) -> Result<(), St
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
-    let tail: Vec<&str> = combined
+    if combined.trim().is_empty() {
+        Err(format!("退出码 {}", out.status))
+    } else {
+        Err(combined)
+    }
+}
+
+/// Compresses a command's full output into its last meaningful lines for
+/// error display.
+fn summarize_output(out: &str) -> String {
+    let tail: Vec<&str> = out
         .lines()
         .map(str::trim)
         .filter(|l| !l.is_empty())
         .collect();
-    let summary = tail
-        .iter()
-        .rev()
-        .take(3)
-        .rev()
-        .cloned()
-        .collect::<Vec<_>>()
-        .join(" | ");
-    Err(if summary.is_empty() {
-        format!("退出码 {}", out.status)
-    } else {
-        summary
-    })
+    tail.iter().rev().take(3).rev().cloned().collect::<Vec<&str>>().join(" | ")
 }
 
 fn mentions_unexpected_store(out: &str) -> bool {
@@ -565,13 +566,22 @@ fn mentions_ignored_builds(out: &str) -> bool {
 }
 
 /// Reads the store a profile's `node_modules` is currently linked from, via
-/// the `storeDir` line pnpm records in `node_modules/.modules.yaml`.
+/// the `storeDir` entry pnpm records in `node_modules/.modules.yaml`. Older
+/// pnpm wrote YAML (`storeDir: /path`); pnpm 10+ writes JSON, so both
+/// layouts are parsed.
 fn linked_store_dir(profile_dir: &std::path::Path) -> Option<String> {
     let raw =
         std::fs::read_to_string(profile_dir.join("node_modules").join(".modules.yaml")).ok()?;
     for line in raw.lines() {
         if let Some(v) = line.trim().strip_prefix("storeDir:") {
             let v = v.trim().trim_matches('"').trim_matches('\'');
+            if !v.is_empty() {
+                return Some(v.to_string());
+            }
+        }
+    }
+    if let Ok(doc) = serde_json::from_str::<serde_json::Value>(&raw) {
+        if let Some(v) = doc.get("storeDir").and_then(|v| v.as_str()) {
             if !v.is_empty() {
                 return Some(v.to_string());
             }
@@ -591,15 +601,27 @@ fn store_paths_match(a: &str, b: &str) -> bool {
 }
 
 /// Relinks a profile's `node_modules` onto the launcher's pinned store.
-/// pnpm's own remedy for ERR_PNPM_UNEXPECTED_STORE is a plain reinstall,
-/// which re-imports the lockfile packages from the new store without
-/// touching package.json; routing it through `dsh plugin install` keeps the
-/// CLI's bundle reconciliation in the loop.
+/// pnpm's own remedy for ERR_PNPM_UNEXPECTED_STORE is a reinstall, but a
+/// plain `pnpm install` short-circuits with "Already up to date" when the
+/// lockfile and node_modules already satisfy package.json — it never
+/// re-links (verified against pnpm 11: `--force`, `--fix-lockfile`, even
+/// deleting `.modules.yaml` all keep the stale store). The only reliable
+/// relink is removing `node_modules` so pnpm must rebuild it from the
+/// lockfile against the new store. `pnpm-lock.yaml` is preserved, so the
+/// reinstall re-imports the same versions; it only costs the first
+/// re-download into the launcher's store. Routing through
+/// `dsh plugin install` keeps the CLI's bundle reconciliation in the loop.
 fn relink_profile_store_sync(
     state: &State<'_, AppState>,
     target: &PluginCliTarget<'_>,
     pnpm_prog: &std::path::Path,
 ) -> Result<(), String> {
+    let dir = profile_dir(target.home_path, target.profile);
+    let nm = dir.join("node_modules");
+    if nm.exists() {
+        std::fs::remove_dir_all(&nm)
+            .map_err(|e| format!("清理旧 node_modules 失败（{}）: {e}", nm.display()))?;
+    }
     let mut args: Vec<String> = vec!["install".to_string()];
     args.extend(forwarded_pnpm_flags(state, "warn", "install"));
     let cmd = dsh_plugin_command(
@@ -609,8 +631,12 @@ fn relink_profile_store_sync(
         &args,
         pnpm_prog,
     )?;
-    run_command_sync(cmd, "dsh plugin install（重新链接 store）")
-        .map_err(|e| format!("dsh plugin install（重新链接 store） 失败: {e}"))
+    run_command_sync(cmd, "dsh plugin install（重新链接 store）").map_err(|e| {
+        format!(
+            "dsh plugin install（重新链接 store） 失败: {}",
+            summarize_output(&e)
+        )
+    })
 }
 
 
@@ -932,6 +958,43 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
         // Missing file → None (fresh profile, nothing to relink).
         assert_eq!(linked_store_dir(&dir), None);
+    }
+
+    #[test]
+    fn linked_store_dir_reads_json_modules_yaml() {
+        // pnpm 10+ writes `.modules.yaml` as JSON; the line-based YAML scan
+        // misses `"storeDir": "..."`, which used to silently skip relinking.
+        let dir = std::env::temp_dir().join(format!("dsh-test-modules-{}", uuid::Uuid::new_v4()));
+        let nm = dir.join("node_modules");
+        std::fs::create_dir_all(&nm).unwrap();
+        std::fs::write(
+            nm.join(".modules.yaml"),
+            r#"{
+  "hoistPattern": ["*"],
+  "packageManager": "pnpm@11.21.0",
+  "storeDir": "/Users/x/Library/pnpm/store/v11",
+  "virtualStoreDir": ".pnpm",
+  "layoutVersion": 5
+}
+"#,
+        )
+        .unwrap();
+        assert_eq!(
+            linked_store_dir(&dir).as_deref(),
+            Some("/Users/x/Library/pnpm/store/v11")
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn summarize_output_keeps_last_three_meaningful_lines() {
+        let out = "ERR_PNPM_UNEXPECTED_STORE: some long diagnostic\nmiddle line\n\nlast line\n";
+        assert_eq!(
+            summarize_output(out),
+            "ERR_PNPM_UNEXPECTED_STORE: some long diagnostic | middle line | last line"
+        );
+        // Empty output stays empty.
+        assert_eq!(summarize_output("\n  \n"), "");
     }
 
     #[test]

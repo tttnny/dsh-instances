@@ -19,6 +19,169 @@ pub struct RunningInstance {
     pub kill: Arc<Notify>,
     pub profile: String,
     pub url: Option<String>,
+    /// Set when the running entry was adopted from a process the launcher did
+    /// not spawn (e.g. DSH restarted itself): `kill` is unused and the watcher
+    /// polls `pid` for liveness instead of reaping a child.
+    pub adopted: Option<Adopted>,
+}
+
+#[derive(Clone, Debug)]
+pub struct Adopted {
+    pub pid: i32,
+    pub port: u16,
+    pub host: String,
+}
+
+/// One listener on the instance port, as reported by lsof.
+struct PortOwner {
+    pid: i32,
+    command: String,
+}
+
+/// Find the process listening on `port`. `None` = port free (or probe
+/// failed — degrade to the old behavior: spawn and let DSH's own
+/// EADDRINUSE speak).
+async fn probe_port_owner(port: u16) -> Option<PortOwner> {
+    let mut cmd = Command::new("lsof");
+    hide_console(&mut cmd);
+    // `-i` must be a single `-iTCP:<port>` argument: a separate "3080" is
+    // parsed as a path operand. No host inside it (lsof 4.91 rejects
+    // `host:port` there); any local listener on the port would collide with
+    // the pinned bind anyway.
+    let out = cmd
+        .args(["-nP", &format!("-iTCP:{port}"), "-sTCP:LISTEN", "-Fp", "-a"])
+        .output()
+        .await
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    let mut pid: Option<i32> = None;
+    for line in text.lines() {
+        if let Some(rest) = line.strip_prefix('p') {
+            pid = rest.parse().ok();
+            break;
+        }
+    }
+    let pid = pid?;
+    let command = process_name(pid).await.unwrap_or_default();
+    Some(PortOwner { pid, command })
+}
+
+/// The short command name (first argv element) of `pid`, best-effort.
+async fn process_name(pid: i32) -> Option<String> {
+    let mut cmd = Command::new("ps");
+    hide_console(&mut cmd);
+    let out = cmd
+        .args(["-p", &pid.to_string(), "-o", "comm="])
+        .output()
+        .await
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+/// Whether a port owner looks like a DSH web server: the launcher spawns
+/// `node <…>/dsh/…/bin.js`, so the listener process is node/DSH's packaged
+/// binary. We match loosely so a packaged executable is recognized too.
+fn looks_like_dsh(command: &str) -> bool {
+    let c = command.to_ascii_lowercase();
+    c.contains("node") || c.contains("dsh")
+}
+
+/// Verify the adopted pid still exists (cheap `kill -0` poll).
+fn pid_alive(pid: i32) -> bool {
+    // SAFETY: kill(2) with signal 0 performs the permission+existence check
+    // without delivering anything.
+    unsafe { libc::kill(pid, 0) == 0 || std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH) }
+}
+
+/// Register an externally-owned DSH process (DSH restarted itself in-place)
+/// as the instance's running entry: bare-URL (the token is in-memory in the
+/// owning process and unrecoverable, but the 30-day browser cookie keeps the
+/// existing browser session working), then start the liveness watcher.
+async fn adopt_external_process(
+    app: &AppHandle,
+    state: &State<'_, AppState>,
+    instance_id: &str,
+    profile: &str,
+    port: u16,
+    host: &str,
+    pid: i32,
+) {
+    {
+        let mut running = state.running.lock().await;
+        if running.contains_key(instance_id) {
+            return; // A real child (re)registered first; it wins.
+        }
+        running.insert(
+            instance_id.to_string(),
+            RunningInstance {
+                kill: Arc::new(Notify::new()),
+                profile: profile.to_string(),
+                url: Some(format!("http://{host}:{port}")),
+                adopted: Some(Adopted { pid, port, host: host.to_string() }),
+            },
+        );
+    }
+    crate::log_info!(
+        "实例 {instance_id} 端口 {host}:{port} 被 DSH 自身重启的外部进程占用（pid {pid}），已收养为运行中"
+    );
+    emit_status(
+        app,
+        &InstanceStatus {
+            id: instance_id.to_string(),
+            state: InstanceState::Running,
+            url: Some(format!("http://{host}:{port}")),
+            profile: Some(profile.to_string()),
+            exit_code: None,
+        },
+    );
+    crate::tray::rebuild_tray_menu(app).await;
+
+    // Watcher: poll the external pid; when it dies, clean up like the waiter
+    // does for real children.
+    let watcher_app = app.clone();
+    let watcher_id = instance_id.to_string();
+    let watcher_profile = profile.to_string();
+    tauri::async_runtime::spawn(async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            let state = watcher_app.state::<AppState>();
+            // Stop coordinating when the entry was replaced by a real child
+            // (a start raced our adoption) or the user stopped the instance.
+            let still_ours = {
+                let running = state.running.lock().await;
+                running
+                    .get(&watcher_id)
+                    .map(|r| r.adopted.as_ref().map(|a| a.pid) == Some(pid))
+                    .unwrap_or(false)
+            };
+            if !still_ours {
+                return;
+            }
+            if pid_alive(pid) {
+                continue;
+            }
+            state.running.lock().await.remove(&watcher_id);
+            crate::log_info!("实例 {watcher_id} 收养的外部进程（pid {pid}）已退出");
+            emit_status(
+                &watcher_app,
+                &InstanceStatus {
+                    id: watcher_id.clone(),
+                    state: InstanceState::Exited,
+                    url: None,
+                    profile: Some(watcher_profile),
+                    exit_code: None,
+                },
+            );
+            crate::tray::rebuild_tray_menu(&watcher_app).await;
+            return;
+        }
+    });
 }
 
 fn url_re() -> &'static Regex {
@@ -219,9 +382,6 @@ pub async fn start_instance_process(
         }
     }
 
-    let mut cmd = Command::new(node());
-    hide_console(&mut cmd);
-    cmd.arg(&bin).arg("--profile").arg(profile);
     // Web-app profiles (their bundle list includes @deepseek-ai/dsh-web-app)
     // get a random free port; other profiles are managed purely as processes
     // (no URL/webview). We detect the web bundle rather than relying on the
@@ -235,6 +395,40 @@ pub async fn start_instance_process(
         .as_deref()
         .map(|hp| is_web_profile(hp, profile))
         .unwrap_or(profile == "web");
+
+    // Preflight for pinned-port instances: DSH can restart itself in-place
+    // (its new process is not our child and holds the pinned port), leaving
+    // the card "stopped" while the port stays occupied — a naive start would
+    // then die with EADDRINUSE. When the port is held by a DSH-looking
+    // process, adopt it as the running instance; when held by anything else,
+    // fail with a actionable error instead of a crash loop.
+    let mut pinned_port: Option<(String, u16)> = None;
+    if is_web {
+        if let Some(port) = inst.port {
+            pinned_port = Some(("127.0.0.1".to_string(), port));
+        }
+    }
+    if let Some((host, port)) = pinned_port.clone() {
+        if let Some(owner) = probe_port_owner(port).await {
+            if looks_like_dsh(&owner.command) {
+                adopt_external_process(app, state, instance_id, profile, port, &host, owner.pid)
+                    .await;
+                return Ok(());
+            }
+            return Err(format!(
+                "端口 {port} 已被其他进程占用（pid {}，{}），请先释放该端口或修改实例端口",
+                owner.pid,
+                if owner.command.is_empty() { "未知进程" } else { &owner.command }
+            ));
+        }
+    }
+
+    let mut cmd = Command::new(node());
+    hide_console(&mut cmd);
+    cmd.arg(&bin).arg("--profile").arg(profile);
+    // Web-app profiles get a random free port (pinned ports were handled by
+    // the preflight above); other profiles are managed purely as processes
+    // (no URL/webview).
     if is_web {
         // Issue #21: a pinned port (1-65535) is used verbatim; otherwise 0
         // binds a random free port so several instances don't collide.
@@ -305,6 +499,7 @@ pub async fn start_instance_process(
             kill: kill_switch.clone(),
             profile: profile.to_string(),
             url: None,
+            adopted: None,
         },
     );
     crate::tray::rebuild_tray_menu(app).await;
@@ -317,6 +512,7 @@ pub async fn start_instance_process(
         let waiter_id = instance_id.to_string();
         let waiter_profile = profile.to_string();
         let waiter_kill = kill_switch.clone();
+        let waiter_port = pinned_port;
         let mut child = child;
         tauri::async_runtime::spawn(async move {
             let state = waiter_app.state::<AppState>();
@@ -333,6 +529,38 @@ pub async fn start_instance_process(
                 crate::log_info!("实例 {waiter_id} 已停止（exit code: {code:?}）");
             } else {
                 crate::log_warn!("实例 {waiter_id} 意外退出（exit code: {code:?}）");
+            }
+            // An unexpected exit may be DSH restarting itself: its successor
+            // is not our child but already re-bound the pinned port. Re-probe
+            // briefly (the successor needs a moment to bind) and adopt it so
+            // the card converges to "running" instead of dead-ending on
+            // EADDRINUSE at the next manual start.
+            if !stopped {
+                if let Some((host, port)) = waiter_port {
+                    for attempt in 0..10 {
+                        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                        if let Some(owner) = probe_port_owner(port).await {
+                            if looks_like_dsh(&owner.command) {
+                                adopt_external_process(
+                                    &waiter_app,
+                                    &state,
+                                    &waiter_id,
+                                    &waiter_profile,
+                                    port,
+                                    &host,
+                                    owner.pid,
+                                )
+                                .await;
+                                return;
+                            }
+                        }
+                        if attempt == 9 {
+                            crate::log_info!(
+                                "实例 {waiter_id} 退出后端口 {host}:{port} 未见 DSH 进程，按普通退出处理"
+                            );
+                        }
+                    }
+                }
             }
             emit_status(
                 &waiter_app,
@@ -411,13 +639,13 @@ pub async fn stop_instance_process(
     state: &State<'_, AppState>,
     instance_id: &str,
 ) -> Result<(), String> {
-    let kill = state
+    let entry = state
         .running
         .lock()
         .await
         .get(instance_id)
-        .map(|r| r.kill.clone());
-    let Some(kill) = kill else {
+        .map(|r| (r.kill.clone(), r.adopted.clone()));
+    let Some((kill, adopted)) = entry else {
         crate::log_debug!("停止实例 {instance_id}：注册表无记录，补发 stopped 状态");
         emit_status(
             app,
@@ -431,6 +659,22 @@ pub async fn stop_instance_process(
         );
         return Ok(());
     };
+    if let Some(a) = adopted {
+        // Adopted external process: no child handle, terminate by pid. The
+        // watcher notices the exit and emits the terminal status.
+        crate::log_info!("停止实例 {instance_id}：结束收养的外部进程（pid {}）", a.pid);
+        let kill_result = unsafe { libc::kill(a.pid, libc::SIGTERM) };
+        if kill_result != 0 && !pid_alive(a.pid) {
+            return Ok(());
+        }
+        for _ in 0..100 {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            if !state.running.lock().await.contains_key(instance_id) {
+                return Ok(());
+            }
+        }
+        return Err("停止实例超时（外部进程未响应终止信号）".to_string());
+    }
     crate::log_info!("收到停止实例 {instance_id} 的请求");
     kill.notify_one();
     // Wait for the waiter task to finish cleanup so callers (e.g. the restart
@@ -450,6 +694,14 @@ pub async fn stop_instance_process(
 pub fn kill_all(state: &AppState) {
     let running = state.running.blocking_lock();
     for entry in running.values() {
+        if let Some(a) = &entry.adopted {
+            // Best-effort SIGTERM; the external process outlives the
+            // launcher's exit anyway (it was never our child).
+            unsafe {
+                libc::kill(a.pid, libc::SIGTERM);
+            }
+            continue;
+        }
         entry.kill.notify_one();
     }
 }
@@ -481,6 +733,33 @@ fn emit_status(app: &AppHandle, status: &InstanceStatus) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn looks_like_dsh_matches_node_and_dsh_processes() {
+        assert!(looks_like_dsh("node"));
+        assert!(looks_like_dsh("Node.js"));
+        assert!(looks_like_dsh("dsh"));
+        assert!(looks_like_dsh("/path/to/dsh-bin"));
+        assert!(!looks_like_dsh("Python"));
+        assert!(!looks_like_dsh("Google Chrome"));
+        assert!(!looks_like_dsh(""));
+    }
+
+    #[tokio::test]
+    async fn probe_port_owner_finds_and_releases_listener() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let owner = probe_port_owner(port).await;
+        assert!(owner.is_some(), "probe must find the listener we hold");
+        let owner = owner.unwrap();
+        assert_eq!(owner.pid, std::process::id() as i32);
+        drop(listener);
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        assert!(
+            probe_port_owner(port).await.is_none(),
+            "probe must report a freed port"
+        );
+    }
 
     #[test]
     fn is_web_profile_detects_web_app_bundle() {
