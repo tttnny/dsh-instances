@@ -436,7 +436,17 @@ pub async fn start_instance_process(
             .port
             .map(|p| p.to_string())
             .unwrap_or_else(|| "0".to_string());
-        cmd.arg("--host").arg("127.0.0.1").arg("--port").arg(port);
+        // `--host` is deliberately NOT passed. 127.0.0.1 is already the
+        // webserver row's default when no flag is given, but an explicit host
+        // flag outranks every config-layer bind: @linxin666/dsh-remote-web-ui
+        // resolves its own LAN toggle through
+        // `desiredBindHost(lanBind, startupHost)`, which returns the flag
+        // verbatim whenever it is `127.0.0.1`/`0.0.0.0`. Hardcoding the flag here
+        // therefore made that plugin's「局域网访问」toggle impossible to turn on
+        // for launcher-started instances (it kept writing the loopback block),
+        // while omitting it leaves the decision where it belongs — the profile
+        // layer (default loopback, or the plugin's managed bind block).
+        cmd.arg("--port").arg(port);
         // `--no-open` was added to dsh-web-app in 0.1.0-rc.8: the launcher
         // embeds the UI in its own webview, so the app must not open the
         // system browser. Feature-detect the flag in the installed bundle's
