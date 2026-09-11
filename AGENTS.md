@@ -27,8 +27,38 @@ pnpm test:release-notes   # 跑 ci 目录的 release-notes 测试
 ```
 
 - 产物：`src-tauri/target/release/bundle/macos/dsh-launcher.app`（`.app` 包）；
-  发版用的 dmg 在推送时才打，推到 GitHub release，日常开发不打。
+  dmg 由 CI 在发版时打并上传到 GitHub release，日常开发不打。
 - Rust 侧快速验证：在 `src-tauri/` 下 `cargo check` 或 `cargo build`。
+
+## 发版（CI 自动化）
+
+`.github/workflows/ci.yml` 负责构建与发布。日常发版只需推一个 tag：
+
+```bash
+git tag v0.2.9 && git push origin v0.2.9   # tag 必须等于 package.json 的 version
+```
+
+- **推 tag** → 质量门禁 → 打包 aarch64 dmg → 发正式 release（Latest）；
+  收尾的 `bump-version` job 自动把 manifest 抬到下一个 patch 并推回 main。
+- **推 main** → 同样流程，但发的是预发布 `v<version>-dev.<工作流序号>`，不会动 Latest。
+- 版本号以 `package.json` 为准，tag 必须与它相等，否则 `ci/resolve-release.sh` 直接报错。
+  抬版本用 `node ci/bump-version.mjs v<已发布的tag>`，改完跑 `node ci/check-versions.mjs`
+  校验（检查 package.json / tauri.conf.json / Cargo.toml 三处一致）。
+- Release notes：流水线只在正文还是占位符时写入「下载表 + 提交列表」，
+  手写的中英双语 notes 重跑时不会被覆盖。
+- `cargo fmt --check` 是提示性的（`continue-on-error`），不阻塞发布：本仓库 Rust 代码是
+  手工排版，全量 `cargo fmt` 会与并行 worktree 冲突。
+- CI 挂掉时的手工补发：`pnpm tauri build --bundles dmg`，再
+  `gh release create v<版本> <dmg路径> --title v<版本> --notes-file <notes>`。
+
+推送前可在本地复现质量门禁：
+
+```bash
+cargo clippy --manifest-path src-tauri/Cargo.toml --workspace --all-targets --locked -- -D warnings
+cargo test --manifest-path src-tauri/Cargo.toml --workspace --locked
+node ci/check-versions.mjs
+```
+
 
 ## 重要：重新构建后必须替换自测用的 App
 
@@ -57,4 +87,5 @@ codesign --verify --deep --strict /Applications/dsh-launcher.app
 
 - 先确认没有正在运行的实例再删除，避免删除运行中的 App 导致行为异常。
 - 替换前重新构建（`pnpm tauri build --bundles app`）保证产物是最新的。
-- ad-hoc 签名仅用于本机自测；正式发版仍走各自的签名/公证流程。
+- ad-hoc 签名只用于本机自测。发版 dmg 就是 `pnpm tauri build` 的原始产物（仅带 linker
+  自带的 adhoc 签名，未签名也未公证），与历史各版本一致；要改这一点需要先配证书。
