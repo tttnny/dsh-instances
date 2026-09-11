@@ -68,8 +68,8 @@ pub fn run() {
             None,
         ))
         // macOS 原生应用菜单栏 (App/编辑/显示/窗口/帮助) + 应用快捷键 (t3)。
-        .menu(|app| crate::app_menu::build_app_menu(app))
-        .on_menu_event(|app, event| crate::app_menu::handle_menu_event(app, event))
+        .menu(crate::app_menu::build_app_menu)
+        .on_menu_event(crate::app_menu::handle_menu_event)
         .setup(|app| {
             // Register the dsh-launcher:// scheme at runtime (Windows/Linux)
             // and forward every deep link to the frontend; the modpack

@@ -1225,10 +1225,10 @@ end run"#;
         if out.status.success() {
             return Ok(());
         }
-        return Err(format!(
+        Err(format!(
             "打开目录失败: {}",
             String::from_utf8_lossy(&out.stderr).trim()
-        ));
+        ))
     }
     #[cfg(not(target_os = "macos"))]
     {
