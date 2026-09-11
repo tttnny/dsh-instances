@@ -430,6 +430,12 @@ pub async fn start_instance_process(
     // the preflight above); other profiles are managed purely as processes
     // (no URL/webview).
     if is_web {
+        // The profile patch's managed lan-bind block outranks `--port` and the
+        // plugin only re-asserts it at boot, so sync it here first — otherwise
+        // a changed port would need a stop/start cycle to take effect.
+        if let Some(hp) = home_path.as_deref() {
+            crate::tasks::assert_profile_lan_bind_port(hp, profile, inst.port.unwrap_or(0));
+        }
         // Issue #21: a pinned port (1-65535) is used verbatim; otherwise 0
         // binds a random free port so several instances don't collide.
         let port = inst

@@ -650,6 +650,61 @@ pub(crate) fn scrub_profile_port_pin(profile_dir: &std::path::Path) {
     }
 }
 
+/// Marker lines the `@linxin666/dsh-remote-web-ui` plugin wraps its managed
+/// lan-bind block in (must match that plugin's `lan-bind.ts`).
+const LAN_BIND_BLOCK_BEGIN: &str = "# --- remote-web-ui lan-bind block (managed - do not edit) ---";
+const LAN_BIND_BLOCK_END: &str = "# --- end remote-web-ui lan-bind block ---";
+
+/// Rewrites the port pinned by the managed lan-bind block in a profile's
+/// `cordis.patch.yml` so the launcher's `--port` takes effect on the very next
+/// start.
+///
+/// That block is a top-level patch row and outranks the CLI `--port`, while
+/// the plugin only re-asserts it at boot — after the web server has already
+/// bound. Without this nudge the first start after a port change comes up on
+/// the old port and only the following start uses the new one. An absent block
+/// is left untouched: an unmanaged profile carries no port override, so the
+/// CLI flag already wins there.
+pub(crate) fn assert_profile_lan_bind_port(home: &std::path::Path, profile: &str, port: u16) {
+    // A profile name reaches this from the UI/config; keep it one path segment
+    // so the patch write can never escape the profiles directory.
+    if profile.is_empty() || profile.starts_with('.') || profile.contains(['/', '\\']) {
+        return;
+    }
+    let patch = home.join("profiles").join(profile).join("cordis.patch.yml");
+    let Ok(raw) = std::fs::read_to_string(&patch) else {
+        return;
+    };
+    let mut in_block = false;
+    let mut changed = false;
+    let lines: Vec<String> = raw
+        .lines()
+        .map(|l| {
+            let trimmed = l.trim_start();
+            if trimmed.starts_with(LAN_BIND_BLOCK_BEGIN) {
+                in_block = true;
+            } else if trimmed.starts_with(LAN_BIND_BLOCK_END) {
+                in_block = false;
+            } else if in_block && trimmed.starts_with("port:") {
+                let indent = " ".repeat(l.len() - trimmed.len());
+                let new = format!("{indent}port: {port}");
+                if new != l {
+                    changed = true;
+                }
+                return new;
+            }
+            l.to_string()
+        })
+        .collect();
+    if changed {
+        let mut out = lines.join("\n");
+        if !out.ends_with('\n') {
+            out.push('\n');
+        }
+        let _ = std::fs::write(&patch, out);
+    }
+}
+
 /// Simple deterministic-ish port offset so multiple homes don't collide often.
 fn rand_port_offset() -> u16 {
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -1635,5 +1690,71 @@ mod tests {
         assert!(parse_pending_builds("").is_empty());
         assert!(parse_pending_builds("not yaml: [unclosed").is_empty());
         assert!(parse_pending_builds("{\"other\": 1}").is_empty());
+    }
+
+    /// Fresh temp home with a `profiles/<profile>/cordis.patch.yml` holding
+    /// `raw`. The caller removes the returned root.
+    fn patch_fixture(profile: &str, raw: &str) -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "dsh-lan-bind-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let dir = root.join("profiles").join(profile);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("cordis.patch.yml"), raw).unwrap();
+        root
+    }
+
+    const MANAGED_BLOCK: &str = "# --- remote-web-ui lan-bind block (managed - do not edit) ---\n\
+- id: webserver\n  \
+name: '@deepseek-ai/dsh-host-webserver'\n  \
+config:\n    host: '0.0.0.0'\n    port: 3080\n    compression: gzip\n\
+# --- end remote-web-ui lan-bind block ---\n";
+
+    #[test]
+    fn assert_lan_bind_port_rewrites_only_the_managed_port() {
+        let home = patch_fixture("web", MANAGED_BLOCK);
+        assert_profile_lan_bind_port(&home, "web", 3099);
+        let text =
+            std::fs::read_to_string(home.join("profiles/web/cordis.patch.yml")).unwrap();
+        assert!(text.contains("port: 3099"), "{text}");
+        assert!(!text.contains("port: 3080"), "{text}");
+        // Host (the LAN toggle's other half) and the rest of the block survive.
+        assert!(text.contains("host: '0.0.0.0'"), "{text}");
+        assert!(text.contains("compression: gzip"), "{text}");
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn assert_lan_bind_port_leaves_unmanaged_profiles_alone() {
+        // No managed block: the CLI --port already wins, so nothing is written
+        // and a hand-authored webserver row keeps its pin.
+        let home = patch_fixture("web", "[]\n\n- id: webserver\n  config:\n    port: 3080\n");
+        assert_profile_lan_bind_port(&home, "web", 3099);
+        let text =
+            std::fs::read_to_string(home.join("profiles/web/cordis.patch.yml")).unwrap();
+        assert_eq!(text, "[]\n\n- id: webserver\n  config:\n    port: 3080\n");
+
+        // A missing patch file is a no-op, not an error.
+        assert_profile_lan_bind_port(&home, "absent", 3099);
+        assert!(!home.join("profiles/absent").exists());
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn assert_lan_bind_port_refuses_path_traversal_profile() {
+        let home = patch_fixture("web", MANAGED_BLOCK);
+        // An escaping name must not write outside profiles/web.
+        assert_profile_lan_bind_port(&home, "../web", 3099);
+        assert_profile_lan_bind_port(&home, "..", 3099);
+        assert_profile_lan_bind_port(&home, "/tmp/evil", 3099);
+        let text =
+            std::fs::read_to_string(home.join("profiles/web/cordis.patch.yml")).unwrap();
+        assert!(text.contains("port: 3080"), "{text}");
+        std::fs::remove_dir_all(&home).ok();
     }
 }
