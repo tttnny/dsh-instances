@@ -206,6 +206,22 @@ pub fn hide_console(cmd: &mut Command) -> &mut Command {
     cmd
 }
 
+/// Node's own flags every spawned DSH process carries. They must be placed
+/// *before* the CLI script path, otherwise the CLI parser sees them as DSH
+/// arguments.
+///
+/// `--preserve-symlinks` keeps a `link:`-ed plugin's module URL on its profile
+/// path instead of its realpath inside the plugin's checkout. DSH routes
+/// kernel packages (`@deepseek-ai/*`) only for importers that live inside the
+/// profiles directory, so without this flag a linked plugin falls back to
+/// Node's own ancestor walk and needs a `node_modules` inside the checkout —
+/// which then has to be re-pointed by hand after every DSH upgrade.
+///
+/// It is passed as an argument rather than via `NODE_OPTIONS` on purpose: an
+/// argument applies to the DSH process alone, while `NODE_OPTIONS` would leak
+/// into the `pnpm` child that `dsh plugin` spawns.
+pub const NODE_RUNTIME_FLAGS: &[&str] = &["--preserve-symlinks"];
+
 /// Whether a version directory is a source checkout (GitHub-only tags
 /// installed via clone + build) rather than an npm-installed package tree.
 /// The marker is the upstream monorepo's CLI package manifest.
@@ -425,7 +441,7 @@ pub async fn start_instance_process(
 
     let mut cmd = Command::new(node());
     hide_console(&mut cmd);
-    cmd.arg(&bin).arg("--profile").arg(profile);
+    cmd.args(NODE_RUNTIME_FLAGS).arg(&bin).arg("--profile").arg(profile);
     // Web-app profiles get a random free port (pinned ports were handled by
     // the preflight above); other profiles are managed purely as processes
     // (no URL/webview).

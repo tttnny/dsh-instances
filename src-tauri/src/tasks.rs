@@ -495,6 +495,7 @@ async fn ensure_web_profile_template(
 
     let mut child = crate::process::hide_console(
         tokio::process::Command::new(crate::process::node())
+            .args(crate::process::NODE_RUNTIME_FLAGS)
             .arg(&bin)
             .arg("--profile")
             .arg("web")

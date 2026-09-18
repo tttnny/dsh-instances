@@ -1028,14 +1028,27 @@ pub fn open_instance_terminal(
         let ver_dir = std::path::PathBuf::from(&ver.dir);
         let bin_dir = ver_dir.join("node_modules").join(".bin");
         let dsh_bin = bin_dir.join("dsh");
-        if !dsh_bin.exists() {
+        // Rewrite a wrapper an earlier launcher build generated, so its Node
+        // flags cannot go stale; never touch a real pnpm-provided `dsh`.
+        let wrapper_is_ours = std::fs::read_to_string(&dsh_bin)
+            .map(|existing| existing.starts_with("#!/bin/sh\nexec node "))
+            .unwrap_or(false);
+        if !dsh_bin.exists() || wrapper_is_ours {
             let target_bin = crate::process::version_bin(&ver_dir);
             if target_bin.exists() {
                 let _ = std::fs::create_dir_all(&bin_dir);
                 #[cfg(unix)]
                 {
                     use std::os::unix::fs::PermissionsExt;
-                    let content = format!("#!/bin/sh\nexec node \"{}\" \"$@\"\n", target_bin.to_string_lossy());
+                    // A bare `dsh` typed in this terminal boots the same
+                    // profiles as the launcher, so it carries the same Node
+                    // runtime flags (see NODE_RUNTIME_FLAGS).
+                    let flags = crate::process::NODE_RUNTIME_FLAGS.join(" ");
+                    let content = format!(
+                        "#!/bin/sh\nexec node {} \"{}\" \"$@\"\n",
+                        flags,
+                        target_bin.to_string_lossy()
+                    );
                     if std::fs::write(&dsh_bin, content).is_ok() {
                         let _ = std::fs::set_permissions(&dsh_bin, std::fs::Permissions::from_mode(0o755));
                     }
